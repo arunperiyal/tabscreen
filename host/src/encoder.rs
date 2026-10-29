@@ -1,6 +1,8 @@
 //! H.264 encoding with GStreamer: raw frames in through `appsrc`, Annex B
 //! access units out through `appsink` onto a broadcast channel.
 
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,6 +36,47 @@ pub struct Encoder {
     /// the screen is static (Mutter only sends frames on damage).
     last: Mutex<Option<gst::Buffer>>,
     last_keyframe_request: Mutex<Option<Instant>>,
+    /// Buffer timestamps are time since `epoch`.
+    epoch: Instant,
+    pushed: Arc<AtomicU32>,
+}
+
+/// Encode latency and throughput, logged every few seconds while frames flow.
+struct Stats {
+    since: Instant,
+    pushed: Arc<AtomicU32>,
+    frames: u32,
+    bytes: usize,
+    total: Duration,
+    max: Duration,
+}
+
+impl Stats {
+    const INTERVAL: Duration = Duration::from_secs(5);
+
+    fn new(pushed: Arc<AtomicU32>) -> Self {
+        Self { since: Instant::now(), pushed, frames: 0, bytes: 0, total: Duration::ZERO, max: Duration::ZERO }
+    }
+
+    fn add(&mut self, latency: Duration, bytes: usize) {
+        self.frames += 1;
+        self.bytes += bytes;
+        self.total += latency;
+        self.max = self.max.max(latency);
+        let elapsed = self.since.elapsed();
+        if elapsed >= Self::INTERVAL {
+            let secs = elapsed.as_secs_f64();
+            eprintln!(
+                "encoder: {:.0} fps in, {:.0} fps out, {:.1} Mbit/s, encode latency avg {:.1} ms, max {:.1} ms",
+                self.pushed.swap(0, Relaxed) as f64 / secs,
+                self.frames as f64 / secs,
+                self.bytes as f64 * 8.0 / secs / 1e6,
+                self.total.as_secs_f64() * 1000.0 / self.frames as f64,
+                self.max.as_secs_f64() * 1000.0
+            );
+            *self = Self::new(self.pushed.clone());
+        }
+    }
 }
 
 /// Keyframes are ~10× the size of other frames; don't let clients ask for them back to back.
@@ -52,8 +95,8 @@ impl Encoder {
             ),
         };
         let desc = format!(
-            "appsrc name=src is-live=true format=time do-timestamp=true max-buffers=2 leaky-type=downstream \
-             ! videoconvert n-threads=4 ! {encode} ! video/x-h264,profile=constrained-baseline \
+            "appsrc name=src is-live=true format=time max-buffers=2 leaky-type=downstream \
+             ! videoconvert name=convert n-threads=4 ! {encode} ! video/x-h264,profile=constrained-baseline \
              ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au \
              ! appsink name=sink sync=false max-buffers=4"
         );
@@ -64,6 +107,20 @@ impl Encoder {
         let appsrc = pipeline.by_name("src").unwrap().downcast::<gst_app::AppSrc>().unwrap();
         let appsink = pipeline.by_name("sink").unwrap().downcast::<gst_app::AppSink>().unwrap();
 
+        let epoch = Instant::now();
+        // When each frame entered the converter. Encoders rewrite timestamps,
+        // but they're 1:1 here, so frames come out in the same order.
+        let in_flight: Arc<Mutex<VecDeque<Instant>>> = Arc::default();
+        let entered = in_flight.clone();
+        pipeline.by_name("convert").unwrap().static_pad("sink").unwrap().add_probe(
+            gst::PadProbeType::BUFFER,
+            move |_, _| {
+                entered.lock().unwrap().push_back(Instant::now());
+                gst::PadProbeReturn::Ok
+            },
+        );
+        let pushed = Arc::new(AtomicU32::new(0));
+        let mut stats = Stats::new(pushed.clone());
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -72,6 +129,9 @@ impl Encoder {
                     let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                     static FIRST: std::sync::Once = std::sync::Once::new();
                     FIRST.call_once(|| eprintln!("encoder: first encoded frame ({} bytes)", map.len()));
+                    if let Some(entered) = in_flight.lock().unwrap().pop_front() {
+                        stats.add(entered.elapsed(), map.len());
+                    }
                     let _ = frames.send(Arc::new(EncodedFrame {
                         keyframe: !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT),
                         pts_us: buffer.pts().map_or(0, |t| t.useconds()),
@@ -97,7 +157,11 @@ impl Encoder {
         })?;
 
         pipeline.set_state(gst::State::Playing).context("starting encoder pipeline")?;
-        Ok(Arc::new(Self { pipeline, appsrc, appsink, last: Mutex::new(None), last_keyframe_request: Mutex::new(None) }))
+        Ok(Arc::new(Self { pipeline, appsrc, appsink, last: Mutex::new(None),
+            last_keyframe_request: Mutex::new(None),
+            epoch,
+            pushed,
+        }))
     }
 
     pub fn set_format(&self, format: &str, width: u32, height: u32) {
@@ -115,9 +179,15 @@ impl Encoder {
     pub fn push(&self, frame: Vec<u8>) {
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| eprintln!("encoder: first raw frame ({} bytes)", frame.len()));
-        let buffer = gst::Buffer::from_mut_slice(frame);
+        let mut buffer = gst::Buffer::from_mut_slice(frame);
+        buffer.get_mut().unwrap().set_pts(self.now());
         *self.last.lock().unwrap() = Some(buffer.clone());
+        self.pushed.fetch_add(1, Relaxed);
         let _ = self.appsrc.push_buffer(buffer);
+    }
+
+    fn now(&self) -> gst::ClockTime {
+        gst::ClockTime::from_nseconds(self.epoch.elapsed().as_nanos() as u64)
     }
 
     /// Make the next encoded frame an IDR with SPS/PPS, re-sending the last
@@ -132,7 +202,9 @@ impl Encoder {
         }
         let event = gst_video::UpstreamForceKeyUnitEvent::builder().all_headers(true).build();
         self.appsink.send_event(event);
-        if let Some(buffer) = self.last.lock().unwrap().clone() {
+        if let Some(last) = self.last.lock().unwrap().as_ref() {
+            let mut buffer = last.copy();
+            buffer.get_mut().unwrap().set_pts(self.now());
             let _ = self.appsrc.push_buffer(buffer);
         }
     }

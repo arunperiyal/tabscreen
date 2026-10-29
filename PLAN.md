@@ -184,8 +184,8 @@ Findings:
 - [x] Keyframe on connect even when the screen is static (last frame re-encoded).
 - [x] Clean teardown: Ctrl+C removes the virtual monitor.
 - [x] `--usb` runs `adb reverse` (code done; not yet run against a tablet).
-- [ ] On the tablet: open `http://localhost:8765` in Chrome over USB.
-- [ ] Cursor drawn on the client when the mouse moves onto the virtual monitor.
+- [x] On the tablet (Motorola XT2571, 2944×1840, Chrome): mouse, cursor and moving
+      windows between displays work (2026-10-30, over wireless adb). Slight lag.
 
 Verified on the dev machine (2026-10-30):
 - `host/examples/ws_check.rs` (scripted client): config, cursor messages,
@@ -202,6 +202,20 @@ Bugs found and fixed while testing:
   decoding, and throttling keyframe requests (client 500 ms, host 250 ms).
 
 **Exit:** drag a window to the tablet and use it with touch.
+
+**Latency budget at 2944×1840** (host, GL test window at 60 fps, 2026-10-30):
+
+| Stage | x264 (`ultrafast`) | NVENC (T600, `p1`) |
+|---|---|---|
+| Frames from PipeWire | 57–60 fps | 59–60 fps |
+| Copy out of PipeWire SHM | 3.3 ms | 3.3 ms |
+| Convert + encode | 8.5 ms avg, 11 max | 13.8 ms avg, 16 max |
+| Host CPU | ~240 % | ~80 % |
+| Bitrate | ~12 Mbit/s | ~13 Mbit/s |
+
+The host adds ~12–17 ms. The rest is transport and the tablet: the stream
+currently goes through a *wireless* adb tunnel. The client status line shows
+fps, Mbit/s, ping RTT and decode time per frame to break this down.
 
 ### M2 — Robustness + Wi‑Fi (1 day)
 - [ ] Size the monitor from the client's `hello` (restart the pipeline if the size changes).

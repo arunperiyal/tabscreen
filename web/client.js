@@ -18,7 +18,8 @@ let decoderState = 'none'; // none | configuring | ready | unsupported
 let lastKeyframeRequest = 0;
 let size = { w: 0, h: 0 };
 let cursor = { x: 0, y: 0, image: null, hotX: 0, hotY: 0, dirty: true };
-let stats = { frames: 0, bytes: 0, rtt: null };
+let stats = { frames: 0, bytes: 0, rtt: null, decodeMs: 0 };
+const decodeStart = new Map(); // chunk timestamp -> performance.now() at decode()
 
 function setStatus(text) { statusEl.textContent = text; }
 
@@ -79,6 +80,11 @@ async function setupDecoder(codec, firstChunk) {
     if (!supported) continue;
     decoder = new VideoDecoder({
       output: (frame) => {
+        const start = decodeStart.get(frame.timestamp);
+        if (start !== undefined) {
+          stats.decodeMs += performance.now() - start;
+          decodeStart.delete(frame.timestamp);
+        }
         screenCtx.drawImage(frame, 0, 0, size.w, size.h);
         frame.close();
         stats.frames++;
@@ -91,6 +97,7 @@ async function setupDecoder(codec, firstChunk) {
     });
     decoder.configure(config);
     decoderState = 'ready';
+    decodeStart.set(firstChunk.timestamp, performance.now());
     decoder.decode(firstChunk); // the keyframe that triggered setup
     console.log('decoder configured', codec, hardwareAcceleration);
     return;
@@ -119,6 +126,8 @@ function onFrame(view, buffer) {
     requestKeyframe();
     return;
   }
+  if (decodeStart.size > 100) decodeStart.clear(); // frames dropped by a decoder reset
+  decodeStart.set(chunk.timestamp, performance.now());
   decoder.decode(chunk);
 }
 
@@ -244,10 +253,12 @@ setInterval(() => {
   send(ping.buffer);
   if (decoderState === 'ready') {
     const rtt = stats.rtt === null ? '–' : `${stats.rtt.toFixed(0)} ms`;
-    setStatus(`${size.w}×${size.h} · ${stats.frames} fps · ${(stats.bytes * 8 / 1e6).toFixed(1)} Mbit/s · rtt ${rtt}`);
+    const decode = stats.frames ? `${(stats.decodeMs / stats.frames).toFixed(0)} ms` : '–';
+    setStatus(`${size.w}×${size.h} · ${stats.frames} fps · ${(stats.bytes * 8 / 1e6).toFixed(1)} Mbit/s · rtt ${rtt} · decode ${decode}`);
   }
   stats.frames = 0;
   stats.bytes = 0;
+  stats.decodeMs = 0;
 }, 1000);
 
 startEl.addEventListener('click', async () => {

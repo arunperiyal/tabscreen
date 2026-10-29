@@ -7,6 +7,7 @@
 use std::mem::size_of;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use pipewire as pw;
@@ -196,6 +197,33 @@ fn read_frame(buf: &spa_sys::spa_buffer, width: usize, height: usize) -> Option<
     Some(out)
 }
 
+/// Frame rate from PipeWire and time spent copying, logged every few seconds.
+struct Stats {
+    since: Instant,
+    frames: u32,
+    copy: Duration,
+}
+
+impl Stats {
+    fn new() -> Self {
+        Self { since: Instant::now(), frames: 0, copy: Duration::ZERO }
+    }
+
+    fn add(&mut self, copy: Duration) {
+        self.frames += 1;
+        self.copy += copy;
+        let elapsed = self.since.elapsed();
+        if elapsed >= Duration::from_secs(5) {
+            eprintln!(
+                "capture: {:.0} fps from PipeWire, copy avg {:.1} ms",
+                self.frames as f64 / elapsed.as_secs_f64(),
+                self.copy.as_secs_f64() * 1000.0 / self.frames as f64
+            );
+            *self = Self::new();
+        }
+    }
+}
+
 /// Run the PipeWire consumer on its own thread until the stream goes away.
 pub fn spawn(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: CursorChannels) -> JoinHandle<Result<()>> {
     std::thread::Builder::new()
@@ -223,7 +251,7 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
     let format_encoder = encoder.clone();
     let weak = mainloop.downgrade();
     let _listener = stream
-        .add_local_listener_with_user_data((0usize, 0usize))
+        .add_local_listener_with_user_data(((0usize, 0usize), Stats::new()))
         .state_changed(move |_, _, old, new| {
             eprintln!("capture: stream {old:?} -> {new:?}");
             if matches!(new, pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_)) {
@@ -247,14 +275,15 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
                 return;
             };
             eprintln!("capture: negotiated {name} {w}x{h}");
-            *size = (w as usize, h as usize);
+            size.0 = (w as usize, h as usize);
             format_encoder.set_format(name, w, h);
             let mut params = [Pod::from_bytes(&meta).unwrap()];
             if let Err(e) = stream.update_params(&mut params) {
                 eprintln!("capture: update_params: {e}");
             }
         })
-        .process(move |stream, &mut (w, h)| unsafe {
+        .process(move |stream, ((w, h), stats)| unsafe {
+            let (w, h) = (*w, *h);
             let pw_buf = stream.dequeue_raw_buffer();
             if pw_buf.is_null() {
                 return;
@@ -262,7 +291,9 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
             let buf = &*(*pw_buf).buffer;
             read_cursor(buf, &cursor);
             if w > 0 {
+                let start = Instant::now();
                 if let Some(frame) = read_frame(buf, w, h) {
+                    stats.add(start.elapsed());
                     encoder.push(frame);
                 }
             }
