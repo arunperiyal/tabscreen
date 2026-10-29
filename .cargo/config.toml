@@ -1,0 +1,8 @@
+# miniconda's pkg-config and cc shadow the system ones on PATH and can't see
+# system libraries (libpipewire, GStreamer); always use the system toolchain.
+[env]
+PKG_CONFIG = "/usr/bin/pkg-config"
+CC = "/usr/bin/cc"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "/usr/bin/cc"
