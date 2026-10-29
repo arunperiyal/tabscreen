@@ -177,11 +177,29 @@ Findings:
 - **Decision: Rust host with its own PipeWire consumer, cursor-mode metadata,
   cursor drawn by the client.** Cursor latency no longer depends on video encoding.
 
-### M1 — Host + web client over USB (2–3 days)
-- [ ] Rust host: mutter, capture, encoder, server modules.
-- [ ] Web client: decode, render, draw cursor, send touch.
-- [ ] `--usb` sets up `adb reverse`; open `http://localhost:8765` in tablet Chrome.
-- [ ] Keyframe on connect; clean teardown (monitor disappears) on disconnect / Ctrl‑C.
+### M1 — Host + web client over USB (in progress — needs tablet check)
+- [x] Rust host: `mutter`, `capture`, `encoder`, `input`, `server` modules.
+- [x] Web client: WebCodecs decode (hardware, falling back to software), cursor
+      overlay, touch → protocol, reconnect, fullscreen + wake lock on first tap.
+- [x] Keyframe on connect even when the screen is static (last frame re-encoded).
+- [x] Clean teardown: Ctrl+C removes the virtual monitor.
+- [x] `--usb` runs `adb reverse` (code done; not yet run against a tablet).
+- [ ] On the tablet: open `http://localhost:8765` in Chrome over USB.
+- [ ] Cursor drawn on the client when the mouse moves onto the virtual monitor.
+
+Verified on the dev machine (2026-10-30):
+- `host/examples/ws_check.rs` (scripted client): config, cursor messages,
+  first frame is a keyframe on a static screen, touches land at exact pixels.
+- Desktop Chrome: 58 fps decoded at 1600×1000 under constant damage (software
+  decoder), synthetic pointer events on the scaled canvas land at exact pixels.
+
+Bugs found and fixed while testing:
+- x264 held back one frame with a variable frame rate (`0/1`) in the caps, so
+  the last change before the screen went static never arrived. Fixed with
+  `60/1` caps.
+- A decoder config error caused a keyframe request loop (54 Mbit/s of
+  keyframes). Fixed by checking `isConfigSupported`, falling back to software
+  decoding, and throttling keyframe requests (client 500 ms, host 250 ms).
 
 **Exit:** drag a window to the tablet and use it with touch.
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>TabScreen</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #screen, #cursor { position: absolute; touch-action: none; }
+  #cursor { cursor: none; }
+  #status {
+    position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 4px;
+    font: 12px/1.4 system-ui, sans-serif; color: #ddd; background: #0008; pointer-events: none;
+  }
+  #start {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font: 20px system-ui, sans-serif; color: #fff; background: #000c;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<canvas id="cursor"></canvas>
+<div id="status">connecting…</div>
+<div id="start">Tap to start</div>
+<script src="client.js"></script>
+</body>
+</html>

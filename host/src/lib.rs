@@ -1,1 +1,5 @@
+pub mod capture;
+pub mod encoder;
+pub mod input;
 pub mod mutter;
+pub mod server;
