@@ -250,11 +250,23 @@ Later:
 - [ ] Multi-touch → protocol; handle rotation (send new `hello`).
 - [ ] Compare latency against the web client.
 
+### Release binary (any phase — can be done between any milestones)
+
+A prebuilt `tabscreen-host` that runs without a Rust toolchain. The web client
+is already embedded, so it is a single file plus system libraries.
+- [ ] `cargo build --release` with `strip = true`, `lto = "thin"` in `[profile.release]`.
+- [ ] Check runtime deps with `ldd`: only system `libpipewire-0.3`, GStreamer
+      (`gstreamer1.0-plugins-base/-good/-ugly`, optionally `-bad` for NVENC), glib.
+- [ ] GitHub Actions workflow on `v*` tags: build on Ubuntu, attach
+      `tabscreen-host-<version>-linux-x86_64.tar.gz` (binary + README) to a GitHub Release.
+- [ ] Optional `.deb` (`cargo deb`) declaring the runtime packages above.
+- [ ] Once M3 exists: signed release APK attached to the same release.
+
 ### M4 — Polish
 - [ ] mDNS (`_tabscreen._tcp`) discovery so the app finds the host automatically.
 - [ ] `systemd --user` service; optional GNOME Shell indicator or tray icon.
-- [ ] Auto `adb reverse` when a USB device is plugged in (udev/adb watcher).
-- [ ] Packaging: host `.deb` / `cargo install`, APK release build.
+- [x] Auto `adb reverse` when a USB device is plugged in (done in M2: `usb.rs`).
+- [ ] Packaging beyond the release binary: distro packages, Flatpak?
 
 ### Stretch
 - Pen pressure/tilt: separate `uinput` tablet device. Mapping it to the virtual
