@@ -109,8 +109,8 @@ All messages: 1-byte type + payload. Little-endian.
 
 | Dir | Type | Name | Payload |
 |---|---|---|---|
-| C→S | `0x01` | hello | UTF-8 JSON `{"w":2000,"h":1200,"dpi":240,"codecs":["h264"],"version":1}` |
-| S→C | `0x02` | config | UTF-8 JSON `{"w":2000,"h":1200,"codec":"avc1.42E01F"}` |
+| C→S | `0x01` | hello | UTF-8 JSON `{"w":2944,"h":1840,"dpr":2,"codecs":["h264"],"version":1}`: screen in device px; first message; sent again on rotation |
+| S→C | `0x02` | config | UTF-8 JSON `{"w":2944,"h":1840}`: sent whenever the session (re)starts; reset the decoder |
 | S→C | `0x03` | frame | `u8 flags` (bit0 = keyframe) · `u64 pts_us` · Annex B access unit |
 | C→S | `0x04` | touch | `u8 action` (0 down, 1 move, 2 up, 3 cancel) · `u8 slot` · `f32 x` · `f32 y` |
 | C→S | `0x05` | keyframe request | — |
@@ -130,7 +130,7 @@ tabscreen/
 ├── .cargo/config.toml  # pins system pkg-config/cc (conda shadows them)
 ├── docs/protocol.md
 ├── host/               # Rust crate tabscreen-host
-│   ├── src/{main,mutter,capture,encoder,server}.rs
+│   ├── src/{main,session,mutter,display,capture,encoder,input,server,usb}.rs
 │   └── examples/cursor_spike.rs
 ├── web/{index.html,client.js}
 ├── android/            # Gradle project (Kotlin), added in M3
@@ -218,11 +218,30 @@ The host adds ~12–17 ms. The rest is transport and the tablet: the stream
 currently goes through a *wireless* adb tunnel. The client status line shows
 fps, Mbit/s, ping RTT and decode time per frame to break this down.
 
-### M2 — Robustness + Wi‑Fi (1 day)
-- [ ] Size the monitor from the client's `hello` (restart the pipeline if the size changes).
-- [ ] Self-signed HTTPS for the web client over Wi‑Fi; show URL + QR in the terminal.
-- [ ] Reconnect handling, ping/latency stats, encoder auto-detect and fallback.
-- [ ] HiDPI: let the user set scale for the virtual monitor in GNOME; check touch mapping still uses stream coordinates.
+### M2 — Robustness ⏳ (essentials done 2026-10-30)
+
+Essentials (branch `m2-essentials`):
+- [x] **Monitor follows the client.** No monitor exists until a client sends
+      `hello`; it's created at the client's screen size (device pixels, even),
+      recreated when a hello asks for another size (rotation), and removed 10 s
+      after the last client leaves. `--size` overrides. (`session.rs`)
+- [x] **Scaling.** Mutter's `NotifyTouch*` take *logical* pixels, so at 200 % a
+      touch aimed at the centre landed in the bottom-right corner. The host now
+      finds its connector (`Meta-N`) in DisplayConfig, tracks its scale through
+      `MonitorsChanged`, and divides by it. Verified at 100/125/167/200 %, with
+      live changes. Cursor metadata stays in device pixels (checked at 200 %),
+      so the client needs no change. (`display.rs`, `scripts/set_scale.py`)
+- [x] **Encoder auto-select.** `--encoder auto` (default) picks NVENC when the
+      nvcodec plugin is present; NVENC now takes BGRx directly (no CPU convert).
+- [x] **USB replug.** `--usb` polls `adb devices` every 2 s and re-runs
+      `adb reverse` for any device that (re)appears. (`usb.rs`)
+- [ ] On the tablet: replug the cable; rotate the tablet; set the tablet's
+      monitor to 150–200 % in Settings and check touch.
+
+Later:
+- [ ] Self-signed HTTPS so the web client works over Wi‑Fi without adb; URL + QR in the terminal.
+- [ ] Encoder fallback at runtime (NVENC present but failing → x264).
+- [ ] Ping/latency stats in the host log.
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).

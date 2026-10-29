@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Fullscreen GTK4 window on the monitor of a given size; prints touch/click events as JSON lines.
+"""Fullscreen GTK4 window on the monitor of a given size in device pixels; prints touch/click events as JSON lines.
 
 Usage: touch_target.py WIDTH HEIGHT
 """
@@ -28,9 +28,10 @@ def find_monitor(display):
     for i in range(monitors.get_n_items()):
         m = monitors.get_item(i)
         g = m.get_geometry()
-        emit(event="monitor", connector=m.get_connector(), x=g.x, y=g.y, w=g.width, h=g.height,
-             scale=m.get_scale_factor())
-        if (g.width, g.height) == (WIDTH, HEIGHT):
+        scale = m.get_scale()  # fractional; geometry is in logical pixels
+        emit(event="monitor", connector=m.get_connector(), x=g.x, y=g.y, w=g.width, h=g.height, scale=scale)
+        # WIDTH x HEIGHT are device pixels; a scaled monitor's geometry is smaller.
+        if (round(g.width * scale), round(g.height * scale)) == (WIDTH, HEIGHT):
             found = m
     return found
 

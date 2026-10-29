@@ -29,10 +29,21 @@ pub struct CursorImage {
     pub rgba: Vec<u8>,
 }
 
+/// Latest cursor state, shared by every session's capture thread.
+#[derive(Clone)]
 pub struct CursorChannels {
     /// Cursor position in monitor pixels.
-    pub position: watch::Sender<(i32, i32)>,
-    pub image: watch::Sender<Arc<CursorImage>>,
+    pub position: Arc<watch::Sender<(i32, i32)>>,
+    pub image: Arc<watch::Sender<Arc<CursorImage>>>,
+}
+
+impl Default for CursorChannels {
+    fn default() -> Self {
+        Self {
+            position: Arc::new(watch::channel((0, 0)).0),
+            image: Arc::new(watch::channel(Arc::new(CursorImage::default())).0),
+        }
+    }
 }
 
 const fn cursor_meta_size(w: usize, h: usize) -> i32 {
@@ -254,11 +265,10 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
         .add_local_listener_with_user_data(((0usize, 0usize), Stats::new()))
         .state_changed(move |_, _, old, new| {
             eprintln!("capture: stream {old:?} -> {new:?}");
-            if matches!(new, pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_)) {
-                if let Some(ml) = weak.upgrade() {
+            if matches!(new, pw::stream::StreamState::Unconnected | pw::stream::StreamState::Error(_))
+                && let Some(ml) = weak.upgrade() {
                     ml.quit();
                 }
-            }
         })
         .param_changed(move |stream, size, id, param| {
             let Some(param) = param else { return };

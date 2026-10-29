@@ -13,12 +13,26 @@ use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 use tokio::sync::broadcast;
 
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 pub enum Codec {
+    /// NVENC if available, else x264
+    Auto,
     /// CPU (libx264)
     X264,
     /// NVIDIA NVENC
     Nvenc,
+}
+
+impl Codec {
+    /// Pick a concrete encoder. The nvcodec plugin only registers `nvh264enc`
+    /// when a usable NVIDIA GPU is present.
+    pub fn resolve(self) -> Codec {
+        match self {
+            Codec::Auto if gst::ElementFactory::find("nvh264enc").is_some() => Codec::Nvenc,
+            Codec::Auto => Codec::X264,
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -84,19 +98,20 @@ const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(250);
 
 impl Encoder {
     pub fn new(codec: Codec, bitrate_kbps: u32, frames: broadcast::Sender<Arc<EncodedFrame>>) -> Result<Arc<Self>> {
-        let encode = match codec {
-            Codec::X264 => format!(
-                "video/x-raw,format=I420 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate_kbps} \
-                 key-int-max=600 bframes=0 sliced-threads=true"
-            ),
+        let encode = match codec.resolve() {
             Codec::Nvenc => format!(
-                "video/x-raw,format=NV12 ! nvh264enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
+                // NVENC takes BGRx/RGBx directly and converts on the GPU.
+                "nvh264enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
                  bitrate={bitrate_kbps} gop-size=600"
+            ),
+            _ => format!(
+                "videoconvert n-threads=4 ! video/x-raw,format=I420 ! x264enc tune=zerolatency \
+                 speed-preset=ultrafast bitrate={bitrate_kbps} key-int-max=600 bframes=0 sliced-threads=true"
             ),
         };
         let desc = format!(
             "appsrc name=src is-live=true format=time max-buffers=2 leaky-type=downstream \
-             ! videoconvert name=convert n-threads=4 ! {encode} ! video/x-h264,profile=constrained-baseline \
+             ! {encode} ! video/x-h264,profile=constrained-baseline \
              ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au \
              ! appsink name=sink sync=false max-buffers=4"
         );
@@ -108,11 +123,11 @@ impl Encoder {
         let appsink = pipeline.by_name("sink").unwrap().downcast::<gst_app::AppSink>().unwrap();
 
         let epoch = Instant::now();
-        // When each frame entered the converter. Encoders rewrite timestamps,
+        // When each frame left appsrc's queue. Encoders rewrite timestamps,
         // but they're 1:1 here, so frames come out in the same order.
         let in_flight: Arc<Mutex<VecDeque<Instant>>> = Arc::default();
         let entered = in_flight.clone();
-        pipeline.by_name("convert").unwrap().static_pad("sink").unwrap().add_probe(
+        appsrc.static_pad("src").unwrap().add_probe(
             gst::PadProbeType::BUFFER,
             move |_, _| {
                 entered.lock().unwrap().push_back(Instant::now());

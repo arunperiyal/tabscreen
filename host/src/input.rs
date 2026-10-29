@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use crate::display::Scale;
 use crate::mutter::VirtualMonitor;
 
 #[derive(Debug, Clone, Copy)]
@@ -22,18 +23,19 @@ pub enum InputCmd {
     ReleaseAll,
 }
 
-pub fn spawn(vm: Arc<VirtualMonitor>, width: u32, height: u32) -> Sender<InputCmd> {
+pub fn spawn(vm: Arc<VirtualMonitor>, width: u32, height: u32, scale: Arc<Scale>) -> Sender<InputCmd> {
     let (tx, rx) = channel();
     std::thread::Builder::new()
         .name("input".into())
-        .spawn(move || run(vm, width, height, rx))
+        .spawn(move || run(vm, width, height, &scale, rx))
         .expect("spawn input thread");
     tx
 }
 
-fn run(vm: Arc<VirtualMonitor>, width: u32, height: u32, rx: Receiver<InputCmd>) {
+fn run(vm: Arc<VirtualMonitor>, width: u32, height: u32, scale: &Scale, rx: Receiver<InputCmd>) {
     let mut active = HashSet::new();
-    let to_px = |v: f32, size: u32| v.clamp(0.0, 1.0) as f64 * (size - 1) as f64;
+    // Mutter takes logical pixels: device pixels divided by the monitor's scale.
+    let to_px = |v: f32, size: u32| v.clamp(0.0, 1.0) as f64 * (size - 1) as f64 / scale.get();
     for cmd in rx {
         let result = match cmd {
             InputCmd::Touch { action, slot, x, y } => {

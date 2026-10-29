@@ -4,7 +4,7 @@
 //! messages, then sends touches onto `scripts/touch_target.py` (fullscreen on
 //! the virtual monitor) and checks where they land.
 //!
-//!   cargo run --example ws_check -- [PORT]
+//!   cargo run --example ws_check -- [PORT] [WIDTHxHEIGHT]
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -65,10 +65,14 @@ where
 #[tokio::main]
 async fn main() -> Result<()> {
     let port = std::env::args().nth(1).unwrap_or_else(|| "8765".into());
+    let size = std::env::args().nth(2).unwrap_or_else(|| "1600x1000".into());
+    let (hello_w, hello_h) = size.split_once('x').context("size must be WIDTHxHEIGHT")?;
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://localhost:{port}/ws"))
         .await
         .context("connecting; is tabscreen-host running?")?;
     let mut seen = Seen::default();
+    let hello = format!(r#"{{"w":{hello_w},"h":{hello_h},"codecs":["h264"],"version":1}}"#);
+    ws.send(Message::Binary([&[0x01], hello.as_bytes()].concat().into())).await?;
 
     read_for(&mut ws, &mut seen, Duration::from_secs(2)).await?;
     println!("after connect (static screen): {seen:?}");
@@ -95,14 +99,18 @@ async fn main() -> Result<()> {
         }
     });
     let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    // Window size in logical pixels: smaller than w×h when the monitor is scaled.
+    let logical_scale = loop {
         read_for(&mut ws, &mut seen, Duration::from_millis(100)).await?;
         match rx.try_recv() {
-            Ok(v) if v["event"] == "ready" => break,
+            Ok(v) if v["event"] == "ready" => break v["w"].as_f64().unwrap() / w as f64,
             Ok(v) if v["event"] == "error" => bail!("touch target: {v}"),
             _ if Instant::now() > deadline => bail!("touch target never became ready"),
             _ => {}
         }
+    };
+    if logical_scale != 1.0 {
+        println!("monitor is scaled: 1 logical px = {:.3} device px", 1.0 / logical_scale);
     }
 
     let points = [(0.1f32, 0.9f32), (0.5, 0.5), (0.25, 0.25), (0.75, 0.8)]; // first is a warm-up
@@ -118,7 +126,7 @@ async fn main() -> Result<()> {
 
     let mut ok = true;
     for &(x, y) in &points[1..] {
-        let (ex, ey) = (x as f64 * (w - 1) as f64, y as f64 * (h - 1) as f64);
+        let (ex, ey) = (x as f64 * (w - 1) as f64 * logical_scale, y as f64 * (h - 1) as f64 * logical_scale);
         let hit = events.iter().any(|v| {
             (v["x"].as_f64().unwrap() - ex).abs() <= 2.0 && (v["y"].as_f64().unwrap() - ey).abs() <= 2.0
         });

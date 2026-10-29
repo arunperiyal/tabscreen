@@ -235,11 +235,10 @@ fn main() -> Result<()> {
             stats.x.load(Relaxed),
             stats.y.load(Relaxed)
         );
-        if n >= seconds + 3 {
-            if let Some(ml) = weak.upgrade() {
+        if n >= seconds + 3
+            && let Some(ml) = weak.upgrade() {
                 ml.quit();
             }
-        }
     });
     timer.update_timer(Some(Duration::from_secs(1)), Some(Duration::from_secs(1))).into_result()?;
 

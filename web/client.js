@@ -197,18 +197,29 @@ cursorCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // --- connection -------------------------------------------------------------------
 
+// The host sizes the virtual monitor to the tablet's screen in device pixels.
+function screenSize() {
+  return { w: Math.round(screen.width * devicePixelRatio), h: Math.round(screen.height * devicePixelRatio) };
+}
+
+let helloSize = null;
+function sendHello() {
+  helloSize = screenSize();
+  const hello = JSON.stringify({ ...helloSize, dpr: devicePixelRatio, codecs: ['h264'], version: 1 });
+  send(new Uint8Array([MSG.HELLO, ...new TextEncoder().encode(hello)]));
+}
+
+// Rotating the tablet swaps width and height: ask for a matching monitor.
+addEventListener('resize', () => {
+  const now = screenSize();
+  if (helloSize && (now.w !== helloSize.w || now.h !== helloSize.h)) sendHello();
+});
+
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
-    const hello = JSON.stringify({
-      w: Math.round(screen.width * devicePixelRatio),
-      h: Math.round(screen.height * devicePixelRatio),
-      dpr: devicePixelRatio,
-      codecs: ['h264'],
-      version: 1,
-    });
-    send(new Uint8Array([MSG.HELLO, ...new TextEncoder().encode(hello)]));
+    sendHello();
     setStatus('connected, waiting for video…');
   };
   ws.onmessage = (ev) => {
@@ -218,6 +229,7 @@ function connect() {
       case MSG.CONFIG: {
         const config = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 1)));
         size = { w: config.w, h: config.h };
+        resetDecoder(); // new monitor: the next keyframe carries a new SPS
         screenCanvas.width = cursorCanvas.width = size.w;
         screenCanvas.height = cursorCanvas.height = size.h;
         cursor.dirty = true;
