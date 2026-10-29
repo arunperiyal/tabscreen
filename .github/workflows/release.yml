@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual runs build and upload the package as an artifact without releasing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    # Build on the oldest supported Ubuntu so the binary runs there and on anything newer.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libclang-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+
+      - name: Check tag matches Cargo.toml version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(grep -m1 '^version' host/Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match host/Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Build
+        working-directory: host
+        run: cargo build --release --locked
+
+      - name: Smoke test
+        run: host/target/release/tabscreen-host --help
+
+      - name: Package
+        id: package
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          else
+            version=$(grep -m1 '^version' host/Cargo.toml | cut -d'"' -f2)-$(git rev-parse --short HEAD)
+          fi
+          name=tabscreen-host-$version-linux-x86_64
+          mkdir "$name"
+          cp host/target/release/tabscreen-host README.md LICENSE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.tar.gz*
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.package.outputs.name }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Install
+
+          ```sh
+          sudo apt install libpipewire-0.3-0t64 gstreamer1.0-plugins-base gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly adb
+          tar xzf tabscreen-host-*-linux-x86_64.tar.gz
+          ./tabscreen-host-*-linux-x86_64/tabscreen-host --usb
+          ```
+
+          Requires GNOME on Wayland. Then open `http://localhost:8765` in Chrome on the
+          USB-connected tablet. See the README for details.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" "$NAME.tar.gz" "$NAME.tar.gz.sha256" \
+            --title "TabScreen $GITHUB_REF_NAME" --notes-file notes.md --generate-notes

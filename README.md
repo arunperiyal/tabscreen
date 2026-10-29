@@ -22,7 +22,7 @@ tablet's touches back.
 | M1 — Rust host + browser client over USB | ✅ verified on a 2944×1840 tablet |
 | M2 — monitor follows the tablet, display scaling, auto encoder, USB replug | ✅ essentials (tablet checks pending) |
 | M3 — native Android app | planned |
-| Release binary | planned (any phase) |
+| Release binary | ✅ GitHub Releases (Linux x86_64) |
 
 Details, measurements and decisions are in [PLAN.md](PLAN.md).
 
@@ -43,8 +43,10 @@ Details, measurements and decisions are in [PLAN.md](PLAN.md).
 
 **Host**
 - Linux with GNOME on Wayland (tested: Ubuntu 26.04, GNOME 50)
-- GStreamer with `x264enc` (`gstreamer1.0-plugins-ugly`); an NVIDIA GPU is used
-  automatically if the `nvh264enc` plugin is available
+- PipeWire and GStreamer plugins: `gstreamer1.0-plugins-base`,
+  `gstreamer1.0-plugins-bad` (`h264parse`, and `nvh264enc` for NVIDIA GPUs) and
+  `gstreamer1.0-plugins-ugly` (`x264enc`). An NVIDIA GPU is used automatically
+  when `nvh264enc` is available.
 - `adb` (`sudo apt install adb`)
 - To build: Rust (stable) and
   ```sh
@@ -57,7 +59,20 @@ Details, measurements and decisions are in [PLAN.md](PLAN.md).
 - Developer options → **USB debugging** enabled, and this computer authorized
   (`adb devices` lists it as `device`)
 
-## Build
+## Install
+
+**Prebuilt binary** (Linux x86_64): download the latest
+`tabscreen-host-*-linux-x86_64.tar.gz` from
+[Releases](https://github.com/arunperiyal/tabscreen/releases), then
+
+```sh
+sudo apt install libpipewire-0.3-0t64 gstreamer1.0-plugins-base \
+                 gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly adb
+tar xzf tabscreen-host-*-linux-x86_64.tar.gz
+./tabscreen-host-*-linux-x86_64/tabscreen-host --usb
+```
+
+**From source:**
 
 ```sh
 git clone https://github.com/arunperiyal/tabscreen.git
@@ -74,7 +89,7 @@ in it.
    noticeable lag).
 2. Start the host:
    ```sh
-   ./target/release/tabscreen-host --usb
+   tabscreen-host --usb
    ```
 3. On the tablet, open **`http://localhost:8765`** in Chrome and tap to start
    (goes fullscreen and keeps the screen on).
@@ -138,7 +153,24 @@ Checks:
 - `scripts/set_scale.py CONNECTOR SCALE` — set a monitor's scale temporarily.
 - `cargo run --example cursor_spike` — cursor update rate from PipeWire.
 
+### Releasing
+
+Bump `version` in `host/Cargo.toml`, commit, then tag and push:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` builds on Ubuntu 24.04, checks the tag matches
+the version, and publishes a GitHub Release with the tarball and its SHA-256.
+Running the workflow manually (Actions → Release → Run workflow) only builds and
+uploads the tarball as an artifact.
+
 ## Roadmap
 
-See [PLAN.md](PLAN.md): native Android app (M3), a downloadable release binary,
-HTTPS for Wi‑Fi without adb, and polish (auto-discovery, service, indicator).
+See [PLAN.md](PLAN.md): native Android app (M3), HTTPS for Wi‑Fi without adb,
+and polish (auto-discovery, service, indicator).
+
+## License
+
+[MIT](LICENSE)

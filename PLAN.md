@@ -250,15 +250,18 @@ Later:
 - [ ] Multi-touch → protocol; handle rotation (send new `hello`).
 - [ ] Compare latency against the web client.
 
-### Release binary (any phase — can be done between any milestones)
+### Release binary ✅ (2026-10-30; can be revisited in any phase)
 
 A prebuilt `tabscreen-host` that runs without a Rust toolchain. The web client
 is already embedded, so it is a single file plus system libraries.
-- [ ] `cargo build --release` with `strip = true`, `lto = "thin"` in `[profile.release]`.
-- [ ] Check runtime deps with `ldd`: only system `libpipewire-0.3`, GStreamer
-      (`gstreamer1.0-plugins-base/-good/-ugly`, optionally `-bad` for NVENC), glib.
-- [ ] GitHub Actions workflow on `v*` tags: build on Ubuntu, attach
-      `tabscreen-host-<version>-linux-x86_64.tar.gz` (binary + README) to a GitHub Release.
+- [x] `cargo build --release` with `strip = true`, `lto = "thin"` in `[profile.release]`.
+- [x] Runtime deps (`ldd` + elements used): `libpipewire-0.3-0t64`, GLib,
+      GStreamer core and `gstreamer1.0-plugins-base` (appsrc/appsink, videoconvert),
+      `-bad` (`h264parse`, `nvh264enc`), `-ugly` (`x264enc`).
+- [x] `.github/workflows/release.yml`: on `v*` tags, build on Ubuntu 24.04, check
+      tag = Cargo version, smoke-test, attach `tabscreen-host-<version>-linux-x86_64.tar.gz`
+      (binary + README + LICENSE) and its SHA-256 to a GitHub Release. Manual runs
+      only upload an artifact.
 - [ ] Optional `.deb` (`cargo deb`) declaring the runtime packages above.
 - [ ] Once M3 exists: signed release APK attached to the same release.
 
