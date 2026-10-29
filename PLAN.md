@@ -177,15 +177,16 @@ Findings:
 - **Decision: Rust host with its own PipeWire consumer, cursor-mode metadata,
   cursor drawn by the client.** Cursor latency no longer depends on video encoding.
 
-### M1 — Host + web client over USB (in progress — needs tablet check)
+### M1 — Host + web client over USB ✅ (2026-10-30)
 - [x] Rust host: `mutter`, `capture`, `encoder`, `input`, `server` modules.
 - [x] Web client: WebCodecs decode (hardware, falling back to software), cursor
       overlay, touch → protocol, reconnect, fullscreen + wake lock on first tap.
 - [x] Keyframe on connect even when the screen is static (last frame re-encoded).
 - [x] Clean teardown: Ctrl+C removes the virtual monitor.
 - [x] `--usb` runs `adb reverse` (code done; not yet run against a tablet).
-- [x] On the tablet (Motorola XT2571, 2944×1840, Chrome): mouse, cursor and moving
-      windows between displays work (2026-10-30, over wireless adb). Slight lag.
+- [x] On the tablet (Motorola XT2571, 2944×1840, Chrome): touch, mouse cursor and
+      moving windows between displays work. Wireless adb lags noticeably; USB is
+      better.
 
 Verified on the dev machine (2026-10-30):
 - `host/examples/ws_check.rs` (scripted client): config, cursor messages,
@@ -201,7 +202,7 @@ Bugs found and fixed while testing:
   keyframes). Fixed by checking `isConfigSupported`, falling back to software
   decoding, and throttling keyframe requests (client 500 ms, host 250 ms).
 
-**Exit:** drag a window to the tablet and use it with touch.
+**Exit:** drag a window to the tablet and use it with touch. ✅
 
 **Latency budget at 2944×1840** (host, GL test window at 60 fps, 2026-10-30):
 

@@ -4,7 +4,10 @@ Use an Android tablet as a touch-enabled second monitor for GNOME on Wayland.
 The host creates a real virtual monitor (it extends the desktop, it doesn't
 mirror), streams it as H.264 to the tablet, and sends the tablet's touches back.
 
-Status: M1 (host + browser client over USB). See [PLAN.md](PLAN.md).
+Status: M1 done — host + browser client over USB, working on a 2944×1840 tablet.
+See [PLAN.md](PLAN.md).
+
+Use a USB cable rather than wireless adb: `adb reverse` over Wi‑Fi adds noticeable lag.
 
 ## Requirements
 
