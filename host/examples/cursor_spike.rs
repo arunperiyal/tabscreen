@@ -18,7 +18,7 @@ use pw::spa;
 use pw::spa::pod::{ChoiceValue, Object, Pod, Property, Value};
 use pw::spa::sys as spa_sys;
 use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Rectangle};
-use tabscreen_host::mutter::{CursorMode, VirtualMonitor};
+use tabscreen_host::mutter::{CursorMode, ScreenStream, Source};
 
 #[derive(Default)]
 struct Stats {
@@ -145,7 +145,7 @@ fn main() -> Result<()> {
         .unwrap_or((1600u32, 1000u32));
     let seconds: u64 = args.next().map(|s| s.parse().unwrap()).unwrap_or(6);
 
-    let vm = Arc::new(VirtualMonitor::start(CursorMode::Metadata)?);
+    let vm = Arc::new(ScreenStream::start(&Source::Virtual, CursorMode::Metadata)?);
     println!("virtual monitor node {} ({width}x{height}, cursor-mode metadata)", vm.node_id);
 
     pw::init();

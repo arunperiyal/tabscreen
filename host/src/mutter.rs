@@ -1,4 +1,5 @@
-//! Virtual monitor and input injection through Mutter's own D-Bus APIs
+//! Screen streams (a new virtual monitor, or a mirror of an existing one) and
+//! input injection through Mutter's own D-Bus APIs
 //! (`org.gnome.Mutter.RemoteDesktop` + `org.gnome.Mutter.ScreenCast`).
 //!
 //! The xdg-desktop-portal can create a virtual monitor but rejects touch on it,
@@ -25,7 +26,16 @@ pub enum CursorMode {
     Metadata = 2,
 }
 
-pub struct VirtualMonitor {
+/// What a stream shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Source {
+    /// A new virtual monitor, sized by the PipeWire consumer.
+    Virtual,
+    /// An existing monitor, by connector name (e.g. `HDMI-1`), at its own size.
+    Mirror(String),
+}
+
+pub struct ScreenStream {
     _conn: Connection,
     rd_session: Proxy<'static>,
     stream_path: OwnedObjectPath,
@@ -33,10 +43,10 @@ pub struct VirtualMonitor {
     pub node_id: u32,
 }
 
-impl VirtualMonitor {
-    /// Create the virtual monitor. Its size is decided by the format the
+impl ScreenStream {
+    /// Start a stream. A virtual monitor's size is decided by the format the
     /// PipeWire consumer negotiates, not here.
-    pub fn start(cursor_mode: CursorMode) -> Result<Self> {
+    pub fn start(source: &Source, cursor_mode: CursorMode) -> Result<Self> {
         let conn = Connection::session()?;
         let rd = Proxy::new(&conn, RD_BUS, "/org/gnome/Mutter/RemoteDesktop", RD_BUS)?;
         let rd_path: OwnedObjectPath = rd.call("CreateSession", &()).context("RemoteDesktop.CreateSession")?;
@@ -48,7 +58,12 @@ impl VirtualMonitor {
         let sc_path: OwnedObjectPath = sc.call("CreateSession", &(props,)).context("ScreenCast.CreateSession")?;
         let sc_session = Proxy::new(&conn, SC_BUS, sc_path.as_str(), "org.gnome.Mutter.ScreenCast.Session")?;
         let props = HashMap::from([("cursor-mode", Value::from(cursor_mode as u32))]);
-        let stream_path: OwnedObjectPath = sc_session.call("RecordVirtual", &(props,)).context("RecordVirtual")?;
+        let stream_path: OwnedObjectPath = match source {
+            Source::Virtual => sc_session.call("RecordVirtual", &(props,)).context("RecordVirtual")?,
+            Source::Mirror(connector) => sc_session
+                .call("RecordMonitor", &(connector.as_str(), props))
+                .with_context(|| format!("RecordMonitor {connector} (see --list-monitors)"))?,
+        };
 
         let stream = Proxy::new_owned(conn.clone(), SC_BUS, stream_path.clone(), "org.gnome.Mutter.ScreenCast.Stream")?;
         let mut added = stream.receive_signal("PipeWireStreamAdded")?;
@@ -85,7 +100,7 @@ impl VirtualMonitor {
     }
 }
 
-impl Drop for VirtualMonitor {
+impl Drop for ScreenStream {
     fn drop(&mut self) {
         self.stop();
     }

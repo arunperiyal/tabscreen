@@ -58,10 +58,12 @@ fn serialize(obj: Object) -> Vec<u8> {
 }
 
 /// Packed RGB formats we accept; the fixed size makes Mutter size the monitor.
-fn format_param(width: u32, height: u32) -> Vec<u8> {
+/// `size`: the virtual monitor size we ask for, or `None` to accept whatever
+/// the source has (mirroring an existing monitor).
+fn format_param(size: Option<(u32, u32)>) -> Vec<u8> {
     use spa::param::format::{FormatProperties, MediaSubtype, MediaType};
     use spa::param::video::VideoFormat;
-    serialize(pw::spa::pod::object!(
+    let mut format = pw::spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamFormat,
         spa::param::ParamType::EnumFormat,
         pw::spa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -77,7 +79,6 @@ fn format_param(width: u32, height: u32) -> Vec<u8> {
             VideoFormat::RGBx,
             VideoFormat::RGBA
         ),
-        pw::spa::pod::property!(FormatProperties::VideoSize, Rectangle, Rectangle { width, height }),
         pw::spa::pod::property!(FormatProperties::VideoFramerate, Fraction, Fraction { num: 0, denom: 1 }),
         pw::spa::pod::property!(
             FormatProperties::VideoMaxFramerate,
@@ -88,7 +89,23 @@ fn format_param(width: u32, height: u32) -> Vec<u8> {
             Fraction { num: 1, denom: 1 },
             Fraction { num: 60, denom: 1 }
         ),
-    ))
+    );
+    format.properties.push(match size {
+        // A fixed size makes Mutter size the virtual monitor.
+        Some((width, height)) => {
+            pw::spa::pod::property!(FormatProperties::VideoSize, Rectangle, Rectangle { width, height })
+        }
+        None => pw::spa::pod::property!(
+            FormatProperties::VideoSize,
+            Choice,
+            Range,
+            Rectangle,
+            Rectangle { width: 1920, height: 1080 },
+            Rectangle { width: 1, height: 1 },
+            Rectangle { width: 8192, height: 8192 }
+        ),
+    });
+    serialize(format)
 }
 
 fn cursor_meta_param() -> Vec<u8> {
@@ -236,14 +253,27 @@ impl Stats {
 }
 
 /// Run the PipeWire consumer on its own thread until the stream goes away.
-pub fn spawn(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: CursorChannels) -> JoinHandle<Result<()>> {
+/// Every negotiated frame size is sent on `negotiated`.
+pub fn spawn(
+    node_id: u32,
+    size: Option<(u32, u32)>,
+    encoder: Arc<Encoder>,
+    cursor: CursorChannels,
+    negotiated: std::sync::mpsc::Sender<(u32, u32)>,
+) -> JoinHandle<Result<()>> {
     std::thread::Builder::new()
         .name("pipewire".into())
-        .spawn(move || run(node_id, width, height, encoder, cursor))
+        .spawn(move || run(node_id, size, encoder, cursor, negotiated))
         .expect("spawn pipewire thread")
 }
 
-fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: CursorChannels) -> Result<()> {
+fn run(
+    node_id: u32,
+    size: Option<(u32, u32)>,
+    encoder: Arc<Encoder>,
+    cursor: CursorChannels,
+    negotiated: std::sync::mpsc::Sender<(u32, u32)>,
+) -> Result<()> {
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
@@ -287,6 +317,7 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
             eprintln!("capture: negotiated {name} {w}x{h}");
             size.0 = (w as usize, h as usize);
             format_encoder.set_format(name, w, h);
+            let _ = negotiated.send((w, h));
             let mut params = [Pod::from_bytes(&meta).unwrap()];
             if let Err(e) = stream.update_params(&mut params) {
                 eprintln!("capture: update_params: {e}");
@@ -311,7 +342,7 @@ fn run(node_id: u32, width: u32, height: u32, encoder: Arc<Encoder>, cursor: Cur
         })
         .register()?;
 
-    let format = format_param(width, height);
+    let format = format_param(size);
     stream.connect(
         spa::utils::Direction::Input,
         Some(node_id),

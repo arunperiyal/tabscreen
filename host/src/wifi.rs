@@ -16,7 +16,6 @@ use anyhow::{Context, Result};
 pub struct Access {
     pub cert_pem: String,
     pub key_pem: String,
-    pub token: String,
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -51,21 +50,26 @@ pub fn lan_ip() -> Option<IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
-/// Load the token and certificate, creating them if needed. The certificate is
-/// regenerated when `ip` isn't among its names (e.g. a new DHCP lease).
-pub fn load_or_create(ip: Option<IpAddr>) -> Result<Access> {
-    let dir = config_dir()?;
-
-    let token_path = dir.join("token");
-    let token = match fs::read_to_string(&token_path) {
-        Ok(token) if token.trim().len() >= 16 => token.trim().to_string(),
+/// The access token for a stream, created on first use. `main` keeps the
+/// original `token` file so existing bookmarks keep working.
+pub fn token(stream: &str) -> Result<String> {
+    let file = if stream == "main" { "token".to_string() } else { format!("token-{stream}") };
+    let path = config_dir()?.join(file);
+    match fs::read_to_string(&path) {
+        Ok(token) if token.trim().len() >= 16 => Ok(token.trim().to_string()),
         _ => {
             let bytes: [u8; 16] = rand::random();
             let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            write_private(&token_path, &token)?;
-            token
+            write_private(&path, &token)?;
+            Ok(token)
         }
-    };
+    }
+}
+
+/// Load the certificate, creating it if needed. It's regenerated when `ip`
+/// isn't among its names (e.g. a new DHCP lease).
+pub fn certificate(ip: Option<IpAddr>) -> Result<Access> {
+    let dir = config_dir()?;
 
     let (cert_path, key_path, names_path) = (dir.join("cert.pem"), dir.join("key.pem"), dir.join("cert-names"));
     let mut names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
@@ -75,7 +79,7 @@ pub fn load_or_create(ip: Option<IpAddr>) -> Result<Access> {
     let existing = (fs::read_to_string(&cert_path), fs::read_to_string(&key_path), fs::read_to_string(&names_path));
     if let (Ok(cert_pem), Ok(key_pem), Ok(cert_names)) = existing
         && names.iter().all(|n| cert_names.lines().any(|l| l == n)) {
-            return Ok(Access { cert_pem, key_pem, token });
+            return Ok(Access { cert_pem, key_pem });
         }
 
     let generated = rcgen::generate_simple_self_signed(names.clone()).context("generating certificate")?;
@@ -84,7 +88,7 @@ pub fn load_or_create(ip: Option<IpAddr>) -> Result<Access> {
     write_private(&key_path, &key_pem)?;
     write_private(&names_path, &names.join("\n"))?;
     eprintln!("wifi: new self-signed certificate for {} (the tablet will warn once)", names.join(", "));
-    Ok(Access { cert_pem, key_pem, token })
+    Ok(Access { cert_pem, key_pem })
 }
 
 /// The URL as a QR code for the terminal, so the tablet can scan it.

@@ -30,6 +30,7 @@ host/                 Rust crate tabscreen-host
   examples/
     ws_check.rs         end-to-end test client
     multi_check.rs      several viewers, --no-touch
+    probe.rs            connect to any stream and report what arrives
     cursor_spike.rs     cursor metadata rate from PipeWire
 web/                  browser client (index.html, client.js)
 scripts/              Python helpers (run with /usr/bin/python3)
@@ -78,6 +79,18 @@ cargo run --release --example multi_check -- 8799 no-touch   # or: touch (host w
 `multi_check` connects a 2000×1250 and then a 1250×2000 client and checks that
 the second adopts the first's size without restarting the session, both get
 video, and touches from the second are dropped (or delivered).
+
+Several streams and mirrors:
+
+```sh
+./target/release/tabscreen-host --port 8799 --stream tab=virtual --stream audience=mirror:HDMI-1,view-only &
+cargo run --release --example probe -- ws://localhost:8799/s/audience/ws 1080x2340 3
+cargo run --release --example ws_check -- 8799 2000x1250        # the first stream, at /ws
+```
+
+`probe` connects like a client to any stream and reports the config, frames,
+keyframes and cursor messages it receives. A mirror only has a frame after its
+monitor's content has changed once since the host started.
 
 For the browser side, open `http://localhost:8799` in desktop Chrome; the status
 line and console (`decoder configured …`) show whether decoding works. Desktop

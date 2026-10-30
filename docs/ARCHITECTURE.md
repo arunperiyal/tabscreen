@@ -1,8 +1,13 @@
 # Architecture
 
 TabScreen has two parts: **`tabscreen-host`**, a Rust program on the Linux
-desktop, and a **web client** that runs in Chrome on the tablet (embedded in the
-host binary). They talk over one WebSocket.
+desktop, and a **web client** that runs in Chrome on the tablet or any other
+device (embedded in the host binary). They talk over one WebSocket per client.
+
+The host serves one or more **streams**. Each stream has a source — a new
+virtual monitor, or a mirror of an existing monitor — its own touch setting,
+page, WebSocket and Wi‑Fi token, and its own session (Mutter stream, capture,
+encoder).
 
 ```
  Linux host (tabscreen-host)                                          Tablet (Chrome)
@@ -24,13 +29,13 @@ host binary). They talk over one WebSocket.
 | Module | Role |
 |---|---|
 | `main.rs` | CLI, starts the HTTP (USB) and optional HTTPS (Wi‑Fi) servers |
-| `session.rs` | Owns the current virtual monitor and everything tied to it; creates, resizes and removes it |
-| `mutter.rs` | Mutter D-Bus session: `RemoteDesktop.CreateSession` + `ScreenCast.RecordVirtual`, touch injection |
+| `session.rs` | One `Manager` per stream: owns its current session and everything tied to it; creates, resizes and removes it |
+| `mutter.rs` | Mutter D-Bus session: `RemoteDesktop.CreateSession` + `ScreenCast.RecordVirtual` or `RecordMonitor`, touch injection |
 | `display.rs` | Mutter `DisplayConfig`: finds our connector (`Meta-N`) and tracks its scale |
 | `capture.rs` | PipeWire consumer: frames with pixels → encoder; `SPA_META_Cursor` → cursor channels |
 | `encoder.rs` | GStreamer pipeline `appsrc ! … ! h264parse ! appsink`; keyframes on demand; stats |
 | `input.rs` | Touch injection thread: normalized coordinates → logical pixels → Mutter |
-| `server.rs` | Serves the web client, speaks the WebSocket protocol, checks the Wi‑Fi token |
+| `server.rs` | Serves the web client per stream (`/`, `/s/<name>/`), speaks the WebSocket protocol, checks each stream's Wi‑Fi token |
 | `usb.rs` | Keeps `adb reverse` set up for every connected device |
 | `wifi.rs` | Self-signed certificate, access token, LAN address, QR code |
 | `web/client.js` | Decoder setup and fallback, cursor overlay, touch, reconnect, status line |
@@ -52,7 +57,21 @@ frames). A client that falls behind skips to the next keyframe instead of
 queueing stale video. Cursor state uses `watch` channels: only the latest
 position and image matter.
 
+## Streams and routes
+
+| Path | |
+|---|---|
+| `/`, `/ws` | the first stream |
+| `/s/<name>/`, `/s/<name>/ws` | stream `<name>` (`/s/<name>` redirects) |
+| `/client.js` | the client, shared by all pages |
+
+The page derives its WebSocket from its own path, so the same client works for
+every stream. Tokens are per stream (`~/.config/tabscreen/token-<name>`; `main`
+uses `token`), so a link to one stream can't open another.
+
 ## Session lifecycle
+
+**Virtual monitor**
 
 1. A client connects and sends `hello` with its screen size in device pixels.
 2. If no monitor exists, or it has another size, the host creates one:
@@ -64,7 +83,19 @@ position and image matter.
 5. When the last client leaves, the monitor is removed after **10 s**, so a page
    reload or a quick replug doesn't shuffle windows around.
 
-Only one virtual monitor exists at a time. Several clients can watch it: the
+**Mirror**
+
+- Started when the host starts and kept running without viewers. Mutter sends a
+  mirrored monitor's frames only when its content changes — even the first frame
+  (verified: 0 frames in 3 s from a static monitor, also with `pipewiresrc`). A
+  mirror started on demand would stay blank on a static slide; kept running, the
+  latest frame is ready for every new viewer.
+- The size is the monitor's; clients' `hello` sizes are ignored. If the mirrored
+  monitor changes mode, or is unplugged, the session ends and restarts when a
+  viewer connects.
+- Encoding only happens when the screen changes, so an idle mirror costs little.
+
+Each stream has at most one session. Several clients can watch a stream: the
 encoded stream is shared, so extra viewers cost bandwidth but no encoding. The
 first client's `hello` decides the size; while more than one client is
 connected, a `hello` with another size is ignored (the host logs `keeping WxH
@@ -86,7 +117,7 @@ WebSocket at `/ws`, binary messages: 1 type byte + payload, little-endian.
 | S→C | `0x07` | cursor move | `i32 x` · `i32 y` in device pixels; outside the monitor = hidden |
 | S→C | `0x08` | cursor image | `u16 w` · `u16 h` · `u16 hot_x` · `u16 hot_y` · RGBA pixels; `w = 0` = hidden |
 
-Over Wi‑Fi the WebSocket URL carries the token: `/ws?t=<token>`.
+Over Wi‑Fi the WebSocket URL carries the stream's token: `…/ws?t=<token>`.
 
 ## Video path
 
@@ -132,7 +163,7 @@ contrast, is in device pixels, matching the video.
 | Listener | HTTP on `127.0.0.1:8765` (`--bind`, `--port`) | HTTPS on `[::]:8766` (`--wifi-port`) |
 | Path | Tablet `localhost:8765` → `adb reverse` → host | Direct TCP over the LAN |
 | Secure context for WebCodecs | `localhost` counts as secure | HTTPS with a self-signed certificate |
-| Access control | Only local connections reach the port | 128-bit token required from every non-loopback client |
+| Access control | Only local connections reach the port | 128-bit token per stream, required from every non-loopback client |
 
 - The token travels in the page URL's fragment (`#t=…`, never sent with the page
   request) and in the WebSocket query. Wrong or missing token → HTTP 401.
@@ -154,6 +185,8 @@ contrast, is in device pixels, matching the video.
 | `60/1` framerate in the encoder caps | With a variable rate (`0/1`) x264 held back one frame, so the last change before the screen went static never arrived |
 | Monitor sized by the client's `hello` | No configuration; follows rotation; one binary for any tablet |
 | Web client first, native app later | Proved the whole path without an Android build |
+| Mirror via `RecordMonitor`, kept running | Shows the real projector output at its own size; always-on because Mutter sends no initial frame for a static monitor |
+| Per-stream tokens | The audience link must not open the presenter's touch stream |
 
 Detailed measurements and the history behind these decisions are in
 [PLAN.md](PLAN.md).

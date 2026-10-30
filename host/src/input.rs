@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::display::Scale;
-use crate::mutter::VirtualMonitor;
+use crate::mutter::ScreenStream;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TouchAction {
@@ -23,7 +23,7 @@ pub enum InputCmd {
     ReleaseAll,
 }
 
-pub fn spawn(vm: Arc<VirtualMonitor>, width: u32, height: u32, scale: Arc<Scale>) -> Sender<InputCmd> {
+pub fn spawn(vm: Arc<ScreenStream>, width: u32, height: u32, scale: Arc<Scale>) -> Sender<InputCmd> {
     let (tx, rx) = channel();
     std::thread::Builder::new()
         .name("input".into())
@@ -32,7 +32,7 @@ pub fn spawn(vm: Arc<VirtualMonitor>, width: u32, height: u32, scale: Arc<Scale>
     tx
 }
 
-fn run(vm: Arc<VirtualMonitor>, width: u32, height: u32, scale: &Scale, rx: Receiver<InputCmd>) {
+fn run(vm: Arc<ScreenStream>, width: u32, height: u32, scale: &Scale, rx: Receiver<InputCmd>) {
     let mut active = HashSet::new();
     // Mutter takes logical pixels: device pixels divided by the monitor's scale.
     let to_px = |v: f32, size: u32| v.clamp(0.0, 1.0) as f64 * (size - 1) as f64 / scale.get();

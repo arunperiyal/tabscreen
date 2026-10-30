@@ -19,7 +19,7 @@ mirror.
 - Pen pressure / tilt (Mutter touch has no pressure; see *Stretch*).
 - Audio, file transfer, clipboard (GSConnect covers these).
 - X11, KDE, wlroots compositors. Design leaves room for them, but GNOME first.
-- Several tablets as *separate* monitors (several viewers of one monitor work).
+- (Several tablets as separate monitors: possible now with several `virtual` streams; untested.)
 
 ## Why this is feasible
 
@@ -158,6 +158,17 @@ Later:
       sizes the monitor; while more clients are connected other sizes are ignored.
       `--no-touch` drops touch from all clients and tells them (`config.touch`).
       Connection counts in the log. Verified with `examples/multi_check.rs`.
+- [x] **Mirror and several streams** (2026-10-30): `--mirror CONNECTOR`
+      (`RecordMonitor`) and `--stream NAME=virtual|mirror:CONNECTOR[,view-only]
+      [,size=WxH]`, each stream with its own manager, page (`/s/<name>/`), Wi‑Fi
+      token and URL/QR. `--list-monitors`. Scenario: tablet = virtual monitor with
+      touch, audience = projector mirror, view-only. Finding: Mutter sends **no
+      initial frame** for a static mirrored monitor (0 frames in 3 s, also with
+      `pipewiresrc`), so mirrors start with the host and stay running; the stored
+      last frame serves late joiners. Verified: both streams concurrently, mirror
+      at the monitor's size regardless of the client, token isolation (401 across
+      streams), late joiner on a static screen gets a keyframe.
+- [ ] On the real setup: tablet + projector + audience phones.
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 

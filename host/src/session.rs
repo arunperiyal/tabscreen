@@ -1,48 +1,53 @@
-//! One virtual monitor at a time, created for the connected client at its
-//! screen size and removed a little while after the last client leaves.
+//! One stream's session: a virtual monitor created for the connected client at
+//! its screen size, or a mirror of an existing monitor. Started by the first
+//! client, removed a little while after the last one leaves.
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch};
 
 use crate::capture::{self, CursorChannels};
 use crate::display;
 use crate::encoder::{Codec, EncodedFrame, Encoder};
 use crate::input::{self, InputCmd};
-use crate::mutter::{CursorMode, VirtualMonitor};
+use crate::mutter::{CursorMode, ScreenStream, Source};
 
-/// How long the monitor outlives its last client, so a reload or a quick
+/// How long the session outlives its last client, so a reload or a quick
 /// replug doesn't shuffle windows around.
 const IDLE_TEARDOWN: Duration = Duration::from_secs(10);
 
 pub struct Settings {
+    /// Stream name, used in URLs (`/s/<name>/`) and logs.
+    pub name: String,
+    pub source: Source,
     pub codec: Codec,
     pub bitrate_kbps: u32,
-    /// Overrides the size clients ask for.
+    /// Overrides the size clients ask for (virtual monitors only).
     pub fixed_size: Option<(u32, u32)>,
-    /// Accept touch input from clients. Off for view-only projection.
+    /// Accept touch input from clients. Off for view-only streams.
     pub touch: bool,
 }
 
-/// Everything tied to one virtual monitor.
+/// Everything tied to one running stream.
 pub struct Session {
     pub width: u32,
     pub height: u32,
     pub encoder: Arc<Encoder>,
     pub input: Sender<InputCmd>,
-    /// Mutter's name for the monitor, e.g. `Meta-0`.
+    /// Mutter's name for the monitor, e.g. `Meta-0` or `HDMI-1`.
     pub connector: String,
-    vm: Arc<VirtualMonitor>,
+    stream: Arc<ScreenStream>,
+    name: String,
 }
 
 impl Session {
     fn stop(&self) {
         self.encoder.stop();
-        self.vm.stop();
-        eprintln!("session: virtual monitor {} ({}x{}) removed", self.connector, self.width, self.height);
+        self.stream.stop();
+        eprintln!("{}: stopped {} ({}x{})", self.name, self.connector, self.width, self.height);
     }
 }
 
@@ -72,18 +77,40 @@ impl Manager {
         })
     }
 
+    pub fn name(&self) -> &str {
+        &self.settings.name
+    }
+
+    pub fn source(&self) -> &Source {
+        &self.settings.source
+    }
+
+    pub fn touch_enabled(&self) -> bool {
+        self.settings.touch
+    }
+
+    /// Mirrors run from startup and stay up without viewers: Mutter only sends
+    /// a mirrored monitor's frames when its content changes, so a mirror started
+    /// on demand would show nothing until then. Kept running, the latest frame
+    /// is always ready for a new viewer.
+    pub fn always_on(&self) -> bool {
+        matches!(self.settings.source, Source::Mirror(_))
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<Option<Arc<Session>>> {
         self.current.subscribe()
     }
 
     /// The session for a client whose screen is `requested` pixels, starting
-    /// or resizing the virtual monitor if needed. Blocks on D-Bus.
+    /// it, or resizing a virtual monitor, if needed. Blocks on D-Bus.
     pub fn acquire(self: &Arc<Self>, requested: (u32, u32)) -> Result<Arc<Session>> {
+        let name = &self.settings.name;
         let (width, height) = self.settings.fixed_size.unwrap_or(requested);
         let _lifecycle = self.lifecycle.lock().unwrap();
         let current = self.current.borrow().clone();
         if let Some(session) = current {
-            if (session.width, session.height) == (width, height) {
+            // A mirror has the mirrored monitor's size, whatever clients ask for.
+            if matches!(self.settings.source, Source::Mirror(_)) || (session.width, session.height) == (width, height) {
                 return Ok(session);
             }
             // With several viewers, the first one's size stays: resizing would
@@ -91,7 +118,7 @@ impl Manager {
             let clients = self.clients.lock().unwrap().0;
             if clients > 1 {
                 eprintln!(
-                    "session: keeping {}x{} for {clients} clients (asked for {width}x{height})",
+                    "{name}: keeping {}x{} for {clients} clients (asked for {width}x{height})",
                     session.width, session.height
                 );
                 return Ok(session);
@@ -99,54 +126,73 @@ impl Manager {
             // Mutter reuses the connector, so remove the old monitor first.
             session.stop();
         }
-        let session = self.start(width, height)?;
+        let session = self.start((width, height))?;
         self.current.send_replace(Some(session.clone()));
         Ok(session)
     }
 
-    fn start(self: &Arc<Self>, width: u32, height: u32) -> Result<Arc<Session>> {
-        let codec = self.settings.codec.resolve();
-        let encoder = Encoder::new(codec, self.settings.bitrate_kbps, self.frames.clone())?;
+    fn start(self: &Arc<Self>, requested: (u32, u32)) -> Result<Arc<Session>> {
+        let Settings { name, source, codec, bitrate_kbps, .. } = &self.settings;
+        let codec = codec.resolve();
+        let encoder = Encoder::new(codec, *bitrate_kbps, self.frames.clone())?;
         let display = zbus::blocking::Connection::session()?;
         let before = display::scales(&display)?;
-        let vm = Arc::new(VirtualMonitor::start(CursorMode::Metadata)?);
-        let capture = capture::spawn(vm.node_id, width, height, encoder.clone(), self.cursor.clone());
-        // The monitor appears once capture has negotiated its size.
-        let connector = display::wait_for_new_connector(&display, &before)?;
+        let stream = Arc::new(ScreenStream::start(source, CursorMode::Metadata)?);
+        let (negotiated_tx, negotiated) = channel();
+        let size = match source {
+            Source::Virtual => Some(requested),
+            Source::Mirror(_) => None,
+        };
+        let capture = capture::spawn(stream.node_id, size, encoder.clone(), self.cursor.clone(), negotiated_tx);
+        let (width, height) =
+            negotiated.recv_timeout(Duration::from_secs(5)).context("the stream never negotiated a frame size")?;
+        let connector = match source {
+            // The virtual monitor appears once capture has negotiated its size.
+            Source::Virtual => display::wait_for_new_connector(&display, &before)?,
+            Source::Mirror(connector) => connector.clone(),
+        };
         let scale = display::watch_scale(display, connector.clone())?;
+        let what = match source {
+            Source::Virtual => "virtual monitor",
+            Source::Mirror(_) => "mirroring",
+        };
         eprintln!(
-            "session: virtual monitor {connector} {width}x{height} active (scale {}, {codec:?}, PipeWire node {})",
+            "{name}: {what} {connector} {width}x{height} (scale {}, {codec:?}, touch {}, PipeWire node {})",
             scale.get(),
-            vm.node_id
+            if self.settings.touch { "on" } else { "off" },
+            stream.node_id
         );
-        let input = input::spawn(vm.clone(), width, height, scale);
-        let session = Arc::new(Session { width, height, encoder, input, connector, vm });
+        let input = input::spawn(stream.clone(), width, height, scale);
+        let session = Arc::new(Session { width, height, encoder, input, connector, stream, name: name.clone() });
 
-        // If Mutter ends the stream on its own, forget the session so the next
-        // client request starts a fresh one.
-        let manager: Weak<Self> = Arc::downgrade(self);
-        let ended: Weak<Session> = Arc::downgrade(&session);
-        std::thread::Builder::new().name("capture-watch".into()).spawn(move || {
-            if let Ok(Err(e)) = capture.join() {
-                eprintln!("session: capture failed: {e:#}");
-            }
-            if let (Some(manager), Some(ended)) = (manager.upgrade(), ended.upgrade()) {
-                let _lifecycle = manager.lifecycle.lock().unwrap();
-                manager.current.send_if_modified(|current| {
-                    let is_ended = current.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ended));
-                    if is_ended {
-                        eprintln!("session: stream ended");
-                        *current = None;
-                    }
-                    is_ended
-                });
-            }
-        })?;
+        self.watch_session(&session, capture, negotiated)?;
         Ok(session)
     }
 
-    pub fn touch_enabled(&self) -> bool {
-        self.settings.touch
+    /// Forget the session when its stream ends (Mutter stopped it, the mirrored
+    /// monitor was unplugged) or its size changes (mirrored monitor's mode
+    /// changed), so clients start a fresh one.
+    fn watch_session(
+        self: &Arc<Self>,
+        session: &Arc<Session>,
+        capture: std::thread::JoinHandle<Result<()>>,
+        negotiated: Receiver<(u32, u32)>,
+    ) -> Result<()> {
+        let size = (session.width, session.height);
+        let (manager, ended) = (Arc::downgrade(self), Arc::downgrade(session));
+        std::thread::Builder::new().name("size-watch".into()).spawn(move || {
+            if negotiated.iter().any(|s| s != size) {
+                end(&manager, &ended, "frame size changed");
+            }
+        })?;
+        let (manager, ended) = (Arc::downgrade(self), Arc::downgrade(session));
+        std::thread::Builder::new().name("capture-watch".into()).spawn(move || {
+            if let Ok(Err(e)) = capture.join() {
+                eprintln!("capture failed: {e:#}");
+            }
+            end(&manager, &ended, "stream ended");
+        })?;
+        Ok(())
     }
 
     /// Returns how many clients are now connected.
@@ -157,13 +203,13 @@ impl Manager {
         clients.0
     }
 
-    /// Remove the monitor if no client reconnects within [`IDLE_TEARDOWN`].
+    /// Stop the session if no client reconnects within [`IDLE_TEARDOWN`].
     pub fn client_disconnected(self: &Arc<Self>) {
         let generation = {
             let mut clients = self.clients.lock().unwrap();
             clients.0 -= 1;
-            eprintln!("server: client disconnected ({} connected)", clients.0);
-            if clients.0 > 0 {
+            eprintln!("{}: client disconnected ({} connected)", self.settings.name, clients.0);
+            if clients.0 > 0 || self.always_on() {
                 return;
             }
             clients.1
@@ -178,11 +224,23 @@ impl Manager {
         });
     }
 
-    /// Remove the virtual monitor, if any. Blocks on D-Bus.
+    /// Stop the session, if any. Blocks on D-Bus.
     pub fn stop(&self) {
         let _lifecycle = self.lifecycle.lock().unwrap();
         if let Some(session) = self.current.send_replace(None) {
             session.stop();
         }
+    }
+}
+
+/// Clear `ended` from its manager if it's still the current session.
+fn end(manager: &Weak<Manager>, ended: &Weak<Session>, reason: &str) {
+    let (Some(manager), Some(ended)) = (manager.upgrade(), ended.upgrade()) else { return };
+    let _lifecycle = manager.lifecycle.lock().unwrap();
+    let is_current = manager.current.borrow().as_ref().is_some_and(|s| Arc::ptr_eq(s, &ended));
+    if is_current {
+        eprintln!("{}: {reason}", manager.settings.name);
+        ended.stop();
+        manager.current.send_replace(None);
     }
 }

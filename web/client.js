@@ -225,7 +225,10 @@ let failures = 0;
 
 function connect() {
   const query = token ? `?t=${encodeURIComponent(token)}` : '';
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${query}`);
+  // Each stream's page lives at /s/<name>/ with its WebSocket next to it; the
+  // first stream is also at /.
+  const base = location.pathname.endsWith('/') ? location.pathname : `${location.pathname}/`;
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${base}ws${query}`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
     connectedOnce = true;

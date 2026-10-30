@@ -75,3 +75,33 @@ pub fn watch_scale(conn: Connection, connector: String) -> Result<Arc<Scale>> {
     })?;
     Ok(scale)
 }
+
+/// A monitor as shown by `--list-monitors`.
+pub struct MonitorInfo {
+    pub connector: String,
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub scale: f64,
+    pub virtual_: bool,
+}
+
+/// Active monitors with their names and current modes.
+pub fn monitors(conn: &Connection) -> Result<Vec<MonitorInfo>> {
+    let (_serial, monitors, _logical, _props): State = proxy(conn)?.call("GetCurrentState", &())?;
+    let scales = scales(conn)?;
+    Ok(monitors
+        .into_iter()
+        .filter_map(|((connector, vendor, ..), modes, props)| {
+            let scale = *scales.get(&connector)?; // only active monitors
+            let (_, width, height, ..) = modes.into_iter().find(|m| {
+                m.6.get("is-current").and_then(|v| bool::try_from(v).ok()).unwrap_or(false)
+            })?;
+            let name = props
+                .get("display-name")
+                .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
+                .unwrap_or_default();
+            Some(MonitorInfo { virtual_: vendor == "MetaVendor", connector, name, width, height, scale })
+        })
+        .collect())
+}

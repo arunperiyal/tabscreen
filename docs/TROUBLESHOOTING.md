@@ -73,6 +73,20 @@ other screens fit it inside theirs.
 By design: it's removed 10 s after the last tablet leaves, so reloads don't move
 your windows.
 
+**Mirror: viewers see "waiting for video"**
+A mirrored monitor only sends frames when its content changes. The mirror runs
+from startup, so this only happens until the screen first changes after the host
+starts — change the slide or move a window on that screen.
+
+**Mirror: "no active monitor" warning, or the stream doesn't start**
+Check the connector name with `tabscreen-host --list-monitors`; the monitor must
+be connected and enabled. If the projector is plugged in later, the stream starts
+when the next viewer connects.
+
+**A link opens the wrong stream, or "missing or wrong token"**
+Each stream has its own link and token; the audience link can't open the tablet
+stream. Use the exact URL printed for that stream (`/s/<name>/#t=…`).
+
 ## Touch and cursor
 
 **Touch does nothing**

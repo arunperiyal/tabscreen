@@ -8,9 +8,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use tokio::sync::broadcast;
 
@@ -31,60 +31,106 @@ const MSG_CURSOR_IMAGE: u8 = 0x08;
 /// Largest monitor we create; H.264 encoders top out around 4096 per side.
 const MAX_SIDE: u32 = 4096;
 
-#[derive(Clone)]
-struct AppState {
-    manager: Arc<Manager>,
+/// One stream as the server sees it.
+pub struct Stream {
+    pub manager: Arc<Manager>,
     /// Required from non-local clients (Wi‑Fi). Local ones (USB via
-    /// `adb reverse`, which arrive on loopback) don't need it.
-    token: Option<Arc<str>>,
+    /// `adb reverse`, which arrive on loopback) don't need it. Each stream has
+    /// its own token, so a link to one stream doesn't open another.
+    pub token: Option<Arc<str>>,
 }
 
-fn router(manager: Arc<Manager>, token: Option<Arc<str>>) -> Router {
+/// All streams; the first one is also served at `/`.
+type Streams = Arc<Vec<Stream>>;
+
+async fn page() -> Html<&'static str> {
+    Html(include_str!("../../web/index.html"))
+}
+
+fn router(streams: Streams) -> Router {
     Router::new()
-        .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
+        .route("/", get(page))
         .route(
             "/client.js",
             get(|| async { ([("content-type", "text/javascript")], include_str!("../../web/client.js")) }),
         )
-        .route("/ws", get(ws_handler))
-        .with_state(AppState { manager, token })
+        .route("/ws", get(default_ws))
+        .route("/s/{name}", get(|Path(name): Path<String>| async move { Redirect::permanent(&format!("/s/{name}/")) }))
+        .route("/s/{name}/", get(named_page))
+        .route("/s/{name}/ws", get(named_ws))
+        .with_state(streams)
 }
 
 /// Plain HTTP, for USB (`adb reverse` makes the tablet's localhost reach us).
-pub async fn serve(addr: SocketAddr, manager: Arc<Manager>, token: Option<Arc<str>>) -> Result<()> {
-    let app = router(manager, token).into_make_service_with_connect_info::<SocketAddr>();
+pub async fn serve(addr: SocketAddr, streams: Streams) -> Result<()> {
+    let app = router(streams).into_make_service_with_connect_info::<SocketAddr>();
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
 /// HTTPS, for Wi‑Fi.
-pub async fn serve_tls(addr: SocketAddr, manager: Arc<Manager>, token: Arc<str>, access: &crate::wifi::Access) -> Result<()> {
+pub async fn serve_tls(addr: SocketAddr, streams: Streams, access: &crate::wifi::Access) -> Result<()> {
     let config = axum_server::tls_rustls::RustlsConfig::from_pem(
         access.cert_pem.clone().into_bytes(),
         access.key_pem.clone().into_bytes(),
     )
     .await
     .context("loading TLS certificate")?;
-    let app = router(manager, Some(token)).into_make_service_with_connect_info::<SocketAddr>();
+    let app = router(streams).into_make_service_with_connect_info::<SocketAddr>();
     axum_server::bind_rustls(addr, config).serve(app).await.with_context(|| format!("HTTPS on {addr}"))?;
     Ok(())
 }
 
-async fn ws_handler(
+async fn named_page(State(streams): State<Streams>, Path(name): Path<String>) -> Response {
+    if streams.iter().any(|s| s.manager.name() == name) {
+        page().await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, format!("no stream named {name:?}")).into_response()
+    }
+}
+
+async fn default_ws(
     ws: WebSocketUpgrade,
-    State(AppState { manager, token }): State<AppState>,
+    State(streams): State<Streams>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(token) = token
-        && !peer.ip().to_canonical().is_loopback() && query.get("t").map(String::as_str) != Some(&*token) {
-            eprintln!("server: rejected {peer}: missing or wrong token");
-            return (StatusCode::UNAUTHORIZED, "missing or wrong token").into_response();
-        }
+    let name = streams[0].manager.name().to_string();
+    open(ws, streams, &name, peer, query)
+}
+
+async fn named_ws(
+    ws: WebSocketUpgrade,
+    State(streams): State<Streams>,
+    Path(name): Path<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    open(ws, streams, &name, peer, query)
+}
+
+fn open(
+    ws: WebSocketUpgrade,
+    streams: Streams,
+    name: &str,
+    peer: SocketAddr,
+    query: HashMap<String, String>,
+) -> Response {
+    let Some(stream) = streams.iter().find(|s| s.manager.name() == name) else {
+        return (StatusCode::NOT_FOUND, format!("no stream named {name:?}")).into_response();
+    };
+    if let Some(token) = &stream.token
+        && !peer.ip().to_canonical().is_loopback()
+        && query.get("t").map(String::as_str) != Some(&**token)
+    {
+        eprintln!("{name}: rejected {peer}: missing or wrong token");
+        return (StatusCode::UNAUTHORIZED, "missing or wrong token").into_response();
+    }
+    let manager = stream.manager.clone();
     ws.on_upgrade(move |socket| async move {
         let clients = manager.client_connected();
-        eprintln!("server: client connected ({clients} connected)");
+        eprintln!("{}: client {peer} connected ({clients} connected)", manager.name());
         if let Err(e) = client(socket, &manager).await {
             // A tab closed or a cable pulled resets the connection; not worth an error.
             let reset = e.chain().any(|c| {
@@ -92,7 +138,7 @@ async fn ws_handler(
                 c.contains("without closing handshake") || c.contains("close_notify")
             });
             if !reset {
-                eprintln!("server: client error: {e:#}");
+                eprintln!("{}: client error: {e:#}", manager.name());
             }
         }
         if let Some(session) = manager.subscribe().borrow().as_ref() {
@@ -143,9 +189,9 @@ fn parse_touch(payload: &[u8]) -> Option<InputCmd> {
 }
 
 /// Screen size from a hello message, rounded down to even numbers (4:2:0 video).
-fn parse_hello(payload: &[u8]) -> Result<(u32, u32)> {
+fn parse_hello(name: &str, payload: &[u8]) -> Result<(u32, u32)> {
     let hello: serde_json::Value = serde_json::from_slice(payload).context("hello is not JSON")?;
-    eprintln!("server: hello {hello}");
+    eprintln!("{name}: hello {hello}");
     let side = |key| {
         let v = hello[key].as_u64().with_context(|| format!("hello has no {key}"))?;
         anyhow::Ok((v as u32).clamp(64, MAX_SIDE) & !1)
@@ -173,7 +219,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
     let wanted = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             match socket.recv().await {
-                Some(Ok(Message::Binary(data))) if data.first() == Some(&MSG_HELLO) => break parse_hello(&data[1..]),
+                Some(Ok(Message::Binary(data))) if data.first() == Some(&MSG_HELLO) => break parse_hello(manager.name(), &data[1..]),
                 Some(Ok(_)) => continue,
                 Some(Err(e)) => break Err(e.into()),
                 None => bail!("closed before hello"),
@@ -216,7 +262,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     Some(&MSG_PING) => socket.send(Message::Binary(data)).await?,
                     // Sent again when the tablet rotates.
                     Some(&MSG_HELLO) => {
-                        wanted = parse_hello(&data[1..])?;
+                        wanted = parse_hello(manager.name(), &data[1..])?;
                         let next = acquire(manager, wanted).await?;
                         sessions.borrow_and_update();
                         if !Arc::ptr_eq(&next, &session) {
@@ -250,7 +296,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     socket.send(frame_message(&frame)).await?;
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("server: client fell behind by {n} frames, waiting for a keyframe");
+                    eprintln!("{}: client fell behind by {n} frames, waiting for a keyframe", manager.name());
                     need_keyframe = true;
                     session.encoder.request_keyframe();
                 }
