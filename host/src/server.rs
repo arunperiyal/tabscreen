@@ -83,8 +83,8 @@ async fn ws_handler(
             return (StatusCode::UNAUTHORIZED, "missing or wrong token").into_response();
         }
     ws.on_upgrade(move |socket| async move {
-        eprintln!("server: client connected");
-        manager.client_connected();
+        let clients = manager.client_connected();
+        eprintln!("server: client connected ({clients} connected)");
         if let Err(e) = client(socket, &manager).await {
             // A tab closed or a cable pulled resets the connection; not worth an error.
             let reset = e.chain().any(|c| {
@@ -99,7 +99,6 @@ async fn ws_handler(
             let _ = session.input.send(InputCmd::ReleaseAll);
         }
         manager.client_disconnected();
-        eprintln!("server: client disconnected");
     })
     .into_response()
 }
@@ -160,8 +159,8 @@ async fn acquire(manager: &Arc<Manager>, size: (u32, u32)) -> Result<Arc<Session
 }
 
 /// Tell the client about a (new) session and get it a keyframe.
-async fn start_session(socket: &mut WebSocket, session: &Session) -> Result<()> {
-    let config = serde_json::json!({ "w": session.width, "h": session.height });
+async fn start_session(socket: &mut WebSocket, session: &Session, touch: bool) -> Result<()> {
+    let config = serde_json::json!({ "w": session.width, "h": session.height, "touch": touch });
     let mut msg = vec![MSG_CONFIG];
     msg.extend_from_slice(config.to_string().as_bytes());
     socket.send(Message::Binary(msg.into())).await?;
@@ -192,7 +191,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
     let mut position = manager.cursor.position.subscribe();
     let mut image = manager.cursor.image.subscribe();
 
-    start_session(&mut socket, &session).await?;
+    start_session(&mut socket, &session, manager.touch_enabled()).await?;
     let (current_image, current_position) = (image.borrow_and_update().clone(), *position.borrow_and_update());
     socket.send(cursor_image_message(&current_image)).await?;
     socket.send(cursor_move_message(current_position)).await?;
@@ -205,7 +204,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                 let Some(incoming) = incoming else { return Ok(()) };
                 let Message::Binary(data) = incoming? else { continue };
                 match data.first() {
-                    Some(&MSG_TOUCH) => {
+                    Some(&MSG_TOUCH) if manager.touch_enabled() => {
                         if let Some(cmd) = parse_touch(&data[1..]) {
                             let _ = session.input.send(cmd);
                         }
@@ -223,7 +222,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                         if !Arc::ptr_eq(&next, &session) {
                             session = next;
                             need_keyframe = true;
-                            start_session(&mut socket, &session).await?;
+                            start_session(&mut socket, &session, manager.touch_enabled()).await?;
                         }
                     }
                     _ => {}
@@ -239,7 +238,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                 if !Arc::ptr_eq(&next, &session) {
                     session = next;
                     need_keyframe = true;
-                    start_session(&mut socket, &session).await?;
+                    start_session(&mut socket, &session, manager.touch_enabled()).await?;
                 }
             }
             frame = frames.recv() => match frame {

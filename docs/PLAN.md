@@ -19,7 +19,7 @@ mirror.
 - Pen pressure / tilt (Mutter touch has no pressure; see *Stretch*).
 - Audio, file transfer, clipboard (GSConnect covers these).
 - X11, KDE, wlroots compositors. Design leaves room for them, but GNOME first.
-- Multiple simultaneous tablets.
+- Several tablets as *separate* monitors (several viewers of one monitor work).
 
 ## Why this is feasible
 
@@ -154,6 +154,10 @@ Later:
       Chrome decodes over HTTPS with the untrusted certificate.
 - [x] On the tablet over Wi‑Fi: works and looks good (2026-10-30). ufw on the
       dev machine needed `allow … port 8766`.
+- [x] **Several viewers / projection** (2026-10-30): the first client's `hello`
+      sizes the monitor; while more clients are connected other sizes are ignored.
+      `--no-touch` drops touch from all clients and tells them (`config.touch`).
+      Connection counts in the log. Verified with `examples/multi_check.rs`.
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 

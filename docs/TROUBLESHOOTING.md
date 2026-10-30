@@ -61,13 +61,23 @@ Drag it in **Settings → Displays**. GNOME usually remembers the arrangement.
 **Rotating the tablet does nothing**
 Chrome must allow rotation (system auto-rotate on). The client re-sends its size
 on rotation and the host logs a new `hello`; the monitor is then recreated in the
-new orientation.
+new orientation — but only if this is the only client. With other viewers
+connected the size is kept (`keeping WxH for N clients` in the log) and the video
+is letterboxed instead.
+
+**A viewer's screen shows black bars**
+Expected with several viewers: the monitor has the first viewer's shape, and
+other screens fit it inside theirs.
 
 **The monitor stays for a few seconds after disconnecting**
 By design: it's removed 10 s after the last tablet leaves, so reloads don't move
 your windows.
 
 ## Touch and cursor
+
+**Touch does nothing**
+The host may be running with `--no-touch` (its startup line says
+`view only (touch off)`).
 
 **Touches land in the wrong place**
 Check the host log for `display: Meta-N scale …` after you change the scale. If

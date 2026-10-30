@@ -64,7 +64,12 @@ position and image matter.
 5. When the last client leaves, the monitor is removed after **10 s**, so a page
    reload or a quick replug doesn't shuffle windows around.
 
-Only one virtual monitor exists at a time; the last `hello` decides its size.
+Only one virtual monitor exists at a time. Several clients can watch it: the
+encoded stream is shared, so extra viewers cost bandwidth but no encoding. The
+first client's `hello` decides the size; while more than one client is
+connected, a `hello` with another size is ignored (the host logs `keeping WxH
+for N clients`) so viewers don't resize each other's monitor. A lone client may
+still resize it (rotation).
 
 ## Protocol
 
@@ -73,9 +78,9 @@ WebSocket at `/ws`, binary messages: 1 type byte + payload, little-endian.
 | Dir | Type | Name | Payload |
 |---|---|---|---|
 | C→S | `0x01` | hello | UTF-8 JSON `{"w":2944,"h":1840,"dpr":2,"codecs":["h264"],"version":1}` — screen in device pixels. First message; sent again on rotation |
-| S→C | `0x02` | config | UTF-8 JSON `{"w":2944,"h":1840}` — sent when a session (re)starts; the client resets its decoder |
+| S→C | `0x02` | config | UTF-8 JSON `{"w":2944,"h":1840,"touch":true}` — sent when a session (re)starts; the client resets its decoder. `touch: false` (`--no-touch`): the client sends no touches and shows the viewer's own pointer |
 | S→C | `0x03` | frame | `u8 flags` (bit 0 = keyframe) · `u64 pts_us` · H.264 Annex B access unit (SPS/PPS before every keyframe) |
-| C→S | `0x04` | touch | `u8 action` (0 down, 1 move, 2 up, 3 cancel) · `u8 slot` · `f32 x` · `f32 y`, `x, y` normalized to `[0, 1]` |
+| C→S | `0x04` | touch | `u8 action` (0 down, 1 move, 2 up, 3 cancel) · `u8 slot` · `f32 x` · `f32 y`, `x, y` normalized to `[0, 1]`; ignored with `--no-touch` |
 | C→S | `0x05` | keyframe request | — |
 | both | `0x06` | ping / pong | `u64 t_us`; the host echoes it back (round-trip time) |
 | S→C | `0x07` | cursor move | `i32 x` · `i32 y` in device pixels; outside the monitor = hidden |
@@ -134,6 +139,8 @@ contrast, is in device pixels, matching the video.
 - Certificate (names: `localhost`, `127.0.0.1`, LAN IP) and token are stored in
   `~/.config/tabscreen/` with mode 0600; the certificate is regenerated when the
   LAN IP changes.
+- Every client with access can also touch, unless the host runs with
+  `--no-touch`; then the URL only grants viewing.
 - Mutter's D-Bus API shows no consent dialog; anyone who can run programs in your
   session could do the same. The host logs every connection and session.
 

@@ -17,6 +17,7 @@ let decoder = null;
 let decoderState = 'none'; // none | configuring | ready | unsupported
 let lastKeyframeRequest = 0;
 let size = { w: 0, h: 0 };
+let touchEnabled = true; // the host turns this off with --no-touch (view only)
 let cursor = { x: 0, y: 0, image: null, hotX: 0, hotY: 0, dirty: true };
 let stats = { frames: 0, bytes: 0, rtt: null, decodeMs: 0 };
 const decodeStart = new Map(); // chunk timestamp -> performance.now() at decode()
@@ -163,6 +164,7 @@ requestAnimationFrame(drawCursor);
 const slots = new Map(); // pointerId -> slot
 
 function sendTouch(action, e) {
+  if (!touchEnabled) return;
   let slot = slots.get(e.pointerId);
   if (slot === undefined) {
     if (action !== TOUCH.DOWN) return;
@@ -238,6 +240,9 @@ function connect() {
       case MSG.CONFIG: {
         const config = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 1)));
         size = { w: config.w, h: config.h };
+        touchEnabled = config.touch !== false;
+        // View only: let the viewer's own mouse pointer show over the video.
+        cursorCanvas.style.cursor = touchEnabled ? 'none' : 'default';
         resetDecoder(); // new monitor: the next keyframe carries a new SPS
         screenCanvas.width = cursorCanvas.width = size.w;
         screenCanvas.height = cursorCanvas.height = size.h;

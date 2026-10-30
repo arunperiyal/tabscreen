@@ -29,6 +29,7 @@ host/                 Rust crate tabscreen-host
   src/                  see ARCHITECTURE.md for what each module does
   examples/
     ws_check.rs         end-to-end test client
+    multi_check.rs      several viewers, --no-touch
     cursor_spike.rs     cursor metadata rate from PipeWire
 web/                  browser client (index.html, client.js)
 scripts/              Python helpers (run with /usr/bin/python3)
@@ -66,6 +67,17 @@ cargo run --release --example ws_check -- 8799 2000x1250
 
 Use a port and size different from a tablet session you have running, so the
 test doesn't attach to your real monitor.
+
+Several viewers and `--no-touch`:
+
+```sh
+./target/release/tabscreen-host --port 8799 --no-touch &
+cargo run --release --example multi_check -- 8799 no-touch   # or: touch (host without --no-touch)
+```
+
+`multi_check` connects a 2000×1250 and then a 1250×2000 client and checks that
+the second adopts the first's size without restarting the session, both get
+video, and touches from the second are dropped (or delivered).
 
 For the browser side, open `http://localhost:8799` in desktop Chrome; the status
 line and console (`decoder configured …`) show whether decoding works. Desktop

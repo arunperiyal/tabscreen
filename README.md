@@ -25,6 +25,8 @@ Chrome.
 - **Low latency** — hardware encoding (NVENC) when available, hardware decoding
   on the tablet.
 - **USB or Wi‑Fi** — USB via `adb reverse`; Wi‑Fi over HTTPS with an access token.
+- **Several viewers** — any number of browsers can watch the same monitor;
+  `--no-touch` makes it view-only for projecting.
 - **No dialogs, no root** — uses GNOME's own D-Bus APIs.
 
 ## Requirements
@@ -78,6 +80,18 @@ open the port, e.g. `sudo ufw allow from 192.168.0.0/24 to any port 8766 proto t
 
 `--usb` and `--wifi` can be combined.
 
+### Projecting to several viewers
+
+```sh
+tabscreen-host --wifi --no-touch
+```
+
+Share the printed URL; everyone who opens it sees the same monitor, scaled to
+their screen. The first viewer's screen decides the monitor's size, and later
+viewers don't change it. With `--no-touch` nobody can control your desktop —
+the URL only lets people watch. (Without it, every viewer can touch.) The host
+logs how many viewers are connected.
+
 ### Then
 
 In **Settings → Displays**, drag the new monitor to where the tablet sits and
@@ -90,6 +104,7 @@ monitor disappears.
 |---|---|---|
 | `--usb` | off | Keep `adb reverse` set up for USB devices, including after a replug |
 | `--wifi` | off | Also accept tablets over Wi‑Fi (HTTPS + token) |
+| `--no-touch` | off | View only: ignore touch from every client |
 | `--size WxH` | tablet's screen | Fixed monitor size instead of following the tablet |
 | `--encoder auto\|nvenc\|x264` | `auto` | `auto` picks NVENC when available |
 | `--bitrate KBPS` | `12000` | Target video bitrate |

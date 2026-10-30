@@ -23,6 +23,8 @@ pub struct Settings {
     pub bitrate_kbps: u32,
     /// Overrides the size clients ask for.
     pub fixed_size: Option<(u32, u32)>,
+    /// Accept touch input from clients. Off for view-only projection.
+    pub touch: bool,
 }
 
 /// Everything tied to one virtual monitor.
@@ -84,6 +86,16 @@ impl Manager {
             if (session.width, session.height) == (width, height) {
                 return Ok(session);
             }
+            // With several viewers, the first one's size stays: resizing would
+            // move windows around for everyone. A lone client may resize (rotation).
+            let clients = self.clients.lock().unwrap().0;
+            if clients > 1 {
+                eprintln!(
+                    "session: keeping {}x{} for {clients} clients (asked for {width}x{height})",
+                    session.width, session.height
+                );
+                return Ok(session);
+            }
             // Mutter reuses the connector, so remove the old monitor first.
             session.stop();
         }
@@ -133,10 +145,16 @@ impl Manager {
         Ok(session)
     }
 
-    pub fn client_connected(&self) {
+    pub fn touch_enabled(&self) -> bool {
+        self.settings.touch
+    }
+
+    /// Returns how many clients are now connected.
+    pub fn client_connected(&self) -> usize {
         let mut clients = self.clients.lock().unwrap();
         clients.0 += 1;
         clients.1 += 1;
+        clients.0
     }
 
     /// Remove the monitor if no client reconnects within [`IDLE_TEARDOWN`].
@@ -144,6 +162,7 @@ impl Manager {
         let generation = {
             let mut clients = self.clients.lock().unwrap();
             clients.0 -= 1;
+            eprintln!("server: client disconnected ({} connected)", clients.0);
             if clients.0 > 0 {
                 return;
             }

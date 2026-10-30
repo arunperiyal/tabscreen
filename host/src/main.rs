@@ -34,6 +34,9 @@ struct Args {
     wifi: bool,
     #[arg(long, default_value_t = 8766)]
     wifi_port: u16,
+    /// View only: ignore touch from all clients (e.g. projecting to several viewers).
+    #[arg(long)]
+    no_touch: bool,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -54,14 +57,20 @@ async fn main() -> Result<()> {
     if args.usb {
         usb::spawn(args.port);
     }
-    let manager = Manager::new(Settings { codec: args.encoder, bitrate_kbps: args.bitrate, fixed_size: args.size });
+    let manager = Manager::new(Settings {
+        codec: args.encoder,
+        bitrate_kbps: args.bitrate,
+        fixed_size: args.size,
+        touch: !args.no_touch,
+    });
     eprintln!(
-        "tabscreen: encoder {:?}; open http://localhost:{} in the tablet's Chrome (Ctrl+C to stop)",
+        "tabscreen: encoder {:?}{}; open http://localhost:{} in the tablet's Chrome (Ctrl+C to stop)",
         args.encoder.resolve(),
+        if args.no_touch { ", view only (touch off)" } else { "" },
         args.port
     );
 
-    let wifi = if args.wifi { Some(start_wifi(manager.clone(), args.wifi_port)?) } else { None };
+    let wifi = if args.wifi { Some(start_wifi(manager.clone(), args.wifi_port, !args.no_touch)?) } else { None };
     let token = wifi.as_ref().map(|(token, _)| token.clone());
     let wifi_server = async move {
         match wifi {
@@ -86,6 +95,7 @@ async fn main() -> Result<()> {
 fn start_wifi(
     manager: Arc<Manager>,
     port: u16,
+    touch: bool,
 ) -> Result<(Arc<str>, impl std::future::Future<Output = Result<()>>)> {
     // rustls needs one crypto backend chosen per process.
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -99,7 +109,8 @@ fn start_wifi(
     if ip.is_some() {
         eprintln!("{}", wifi::qr(&url)?);
     }
-    eprintln!("wifi: accept the certificate warning once (Advanced → Proceed). Anyone with this URL can control the screen.");
+    let power = if touch { "see and control" } else { "see" };
+    eprintln!("wifi: accept the certificate warning once (Advanced → Proceed). Anyone with this URL can {power} the screen.");
 
     // Listen on IPv6 and IPv4 where the system supports dual-stack sockets.
     let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
