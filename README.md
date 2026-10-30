@@ -81,7 +81,8 @@ HTTPS pages. The token in the URL is required for every Wi‑Fi connection —
 anyone with the URL can see and control the screen. If a firewall is active,
 open the port, e.g. `sudo ufw allow from 192.168.0.0/24 to any port 8766 proto tcp`.
 
-`--usb` and `--wifi` can be combined.
+`--usb` and `--wifi` can be combined. `--usb` is only needed for devices on a
+cable; when everyone uses Wi‑Fi, `--wifi` alone is enough.
 
 ### Sharing with several viewers
 
@@ -106,20 +107,22 @@ tabscreen-host --wifi --mirror HDMI-1 --no-touch
 Several streams can run at once, each with its own page, link and token:
 
 ```sh
-tabscreen-host --usb --wifi \
+tabscreen-host --wifi \
   --stream tab=virtual \
   --stream audience=mirror:HDMI-1,view-only
 ```
 
-- **tab** — a virtual monitor for your tablet (touch), at `http://localhost:8765/`
-  over USB or its own Wi‑Fi link.
+- **tab** — a virtual monitor for your tablet (touch), e.g. for the presenter's
+  notes: its own Wi‑Fi link (or `http://localhost:8765/` over USB with `--usb`).
 - **audience** — whatever the projector on `HDMI-1` shows, view-only, at
   `…/s/audience/`. Share its link or QR code; it can't open the `tab` stream.
 
 Stream syntax: `NAME=virtual[,view-only][,size=WxH]` or
 `NAME=mirror:CONNECTOR[,view-only]`. The first stream is also served at `/`.
 A mirror starts with the host and stays running; until the mirrored screen
-first changes after startup, viewers see "waiting for video".
+first changes after startup, viewers see "waiting for video". Known issue: a
+viewer on a slow connection can fall behind during animations — see
+[Troubleshooting](docs/TROUBLESHOOTING.md).
 
 ### Then
 

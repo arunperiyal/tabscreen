@@ -168,9 +168,56 @@ Later:
       last frame serves late joiners. Verified: both streams concurrently, mirror
       at the monitor's size regardless of the client, token isolation (401 across
       streams), late joiner on a static screen gets a keyframe.
-- [ ] On the real setup: tablet + projector + audience phones.
+- [x] On the real setup (2026-10-30): tablet showing the presenter's notes
+      (`tab=virtual`, touch), a 1920×1080 HDMI monitor as the projector, and a
+      phone as audience (`audience=mirror:HDMI-1,view-only`), all over Wi‑Fi.
+      Works. **The audience stream lags noticeably, especially during slide
+      animations; the tablet stream is better.** See *M2b — Per-client flow control*.
+      (`--usb` was not needed: it only maintains `adb reverse` for cable connections.)
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
+
+### M2b — Per-client flow control (next)
+
+**Problem.** Audience viewers lag far behind during slide animations, while the
+tablet stream stays responsive.
+
+**Likely cause.** The server never drops frames for a slow client: each frame is
+awaited on `socket.send`, so when a viewer's link is slower than the video, frames
+queue in the TCP send buffer (several MB = seconds of video) and latency grows
+instead of the frame rate dropping. The broadcast channel only reports lag after
+8 frames, and by then the backlog is already in the kernel. Animations make it
+worse: a mirrored projector repaints most of the screen at 60 fps, so bitrate
+spikes far above the presenter-notes stream, which is mostly static.
+Contributing factors to rule out: phone on 2.4 GHz Wi‑Fi, software decoding on
+the phone, encoder rate control letting bursts exceed `--bitrate`.
+
+**Measure first** (during an animation, phone and tablet side by side):
+- [ ] Phone and tablet status lines: fps, Mbit/s, `rtt`, decode. Pings share the
+      TCP stream with video, so `rtt` rising to hundreds of ms confirms queueing.
+- [ ] Host log: `encoder:` lines (Mbit/s during animations) and any
+      `audience: client fell behind` lines.
+
+**Fix.**
+- [ ] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
+      frame arrives (before decoding).
+- [ ] Server: track bytes/frames in flight per client (sent − acked). Above a
+      budget (≈100 ms of video or 3 frames), skip delta frames for *that client
+      only*, then resume at the next keyframe (request one, throttled as today).
+      Slow viewers get a lower frame rate instead of growing delay; others are
+      unaffected.
+- [ ] Count skipped frames per client and show it in the status line/host log.
+- [ ] Encoder rate control: constant bitrate with a small VBV buffer
+      (`nvh264enc rc-mode=cbr vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so
+      animations can't burst far above `--bitrate`.
+- [ ] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
+- [ ] Re-test the real setup: phone latency during animations should stay close
+      to the tablet's.
+
+Later (if needed): adaptive bitrate per stream from the clients' ack timing;
+smaller keyframes (intra refresh) so resyncs don't spike.
+
+Workaround until then: `--bitrate 6000` lowers the peak data rate (softer image in motion).
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).
