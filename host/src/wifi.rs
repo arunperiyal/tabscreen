@@ -73,11 +73,10 @@ pub fn load_or_create(ip: Option<IpAddr>) -> Result<Access> {
         names.push(ip.to_string());
     }
     let existing = (fs::read_to_string(&cert_path), fs::read_to_string(&key_path), fs::read_to_string(&names_path));
-    if let (Ok(cert_pem), Ok(key_pem), Ok(cert_names)) = existing {
-        if names.iter().all(|n| cert_names.lines().any(|l| l == n)) {
+    if let (Ok(cert_pem), Ok(key_pem), Ok(cert_names)) = existing
+        && names.iter().all(|n| cert_names.lines().any(|l| l == n)) {
             return Ok(Access { cert_pem, key_pem, token });
         }
-    }
 
     let generated = rcgen::generate_simple_self_signed(names.clone()).context("generating certificate")?;
     let (cert_pem, key_pem) = (generated.cert.pem(), generated.signing_key.serialize_pem());

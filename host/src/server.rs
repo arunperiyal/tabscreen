@@ -77,12 +77,11 @@ async fn ws_handler(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(token) = token {
-        if !peer.ip().to_canonical().is_loopback() && query.get("t").map(String::as_str) != Some(&*token) {
+    if let Some(token) = token
+        && !peer.ip().to_canonical().is_loopback() && query.get("t").map(String::as_str) != Some(&*token) {
             eprintln!("server: rejected {peer}: missing or wrong token");
             return (StatusCode::UNAUTHORIZED, "missing or wrong token").into_response();
         }
-    }
     ws.on_upgrade(move |socket| async move {
         eprintln!("server: client connected");
         manager.client_connected();
