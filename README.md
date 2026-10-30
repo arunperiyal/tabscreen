@@ -21,6 +21,7 @@ tablet's touches back.
 | M0 — prove virtual monitor + touch on GNOME | ✅ |
 | M1 — Rust host + browser client over USB | ✅ verified on a 2944×1840 tablet |
 | M2 — monitor follows the tablet, display scaling, auto encoder, USB replug | ✅ essentials (tablet checks pending) |
+| Wi‑Fi without adb (HTTPS + access token) | ✅ host side; tablet check pending |
 | M3 — native Android app | planned |
 | Release binary | ✅ GitHub Releases (Linux x86_64) |
 
@@ -98,6 +99,24 @@ in it.
 
 Stop with Ctrl+C; the virtual monitor disappears.
 
+### Over Wi‑Fi (no cable)
+
+```sh
+tabscreen-host --wifi
+```
+
+The host prints a URL like `https://192.168.0.10:8766/#t=<token>` and a QR code.
+On the tablet (same network), open that URL — or scan the QR code — and accept
+the certificate warning once (**Advanced → Proceed**): the host uses a
+self-signed certificate because Chrome only decodes video on HTTPS pages.
+
+- The token in the URL is required for every non-local connection; anyone with
+  the URL can see and control the screen. The certificate and token live in
+  `~/.config/tabscreen/`; delete `token` to issue a new one.
+- If a firewall is active, open the port for your network, e.g.
+  `sudo ufw allow from 192.168.0.0/24 to any port 8766 proto tcp`.
+- `--wifi` and `--usb` can be used together; USB stays on `http://localhost:8765`.
+
 ### Options
 
 | Option | Default | |
@@ -107,16 +126,20 @@ Stop with Ctrl+C; the virtual monitor disappears.
 | `--encoder auto\|nvenc\|x264` | `auto` | `auto` picks NVENC when available |
 | `--bitrate KBPS` | `12000` | Target video bitrate |
 | `--port PORT` | `8765` | HTTP/WebSocket port |
-| `--bind ADDR` | `127.0.0.1` | Listen address; the default only accepts local/USB connections |
+| `--bind ADDR` | `127.0.0.1` | Listen address of the HTTP (USB) server; the default only accepts local connections |
+| `--wifi` | off | Also serve HTTPS on all interfaces for Wi‑Fi, protected by a token |
+| `--wifi-port PORT` | `8766` | HTTPS port for `--wifi` |
 
 The page's status line shows resolution, fps, bitrate, round-trip time and
 decode time; the host logs capture and encoder statistics every 5 s.
 
 ## Troubleshooting
 
-- **"WebCodecs unavailable"** — the page must be opened as `http://localhost:…`
-  (via USB). Chrome only allows video decoding on secure origins; plain HTTP over
-  Wi‑Fi doesn't qualify (HTTPS is planned).
+- **"WebCodecs unavailable"** — open `http://localhost:8765` (USB) or the
+  `https://` URL printed by `--wifi`. Chrome only decodes video on secure
+  origins, so plain `http://<ip>` doesn't work.
+- **"cannot connect: use the exact URL"** — the token is missing or wrong;
+  copy the URL (including `#t=…`) from the host's output.
 - **Address already in use** — another `tabscreen-host` is running; stop it or
   use `--port`.
 - **Tablet can't connect** — check `adb devices` shows it as `device` and
@@ -140,6 +163,7 @@ host/              Rust host (tabscreen-host)
   src/input.rs       touch injection
   src/server.rs      HTTP + WebSocket protocol
   src/usb.rs         adb reverse watcher
+  src/wifi.rs        Wi‑Fi: self-signed certificate, access token, QR code
   examples/          ws_check (end-to-end test), cursor_spike
 web/               browser client (embedded into the binary at build time)
 scripts/           M0 Python spikes, touch target, set_scale helper
@@ -168,8 +192,8 @@ uploads the tarball as an artifact.
 
 ## Roadmap
 
-See [PLAN.md](PLAN.md): native Android app (M3), HTTPS for Wi‑Fi without adb,
-and polish (auto-discovery, service, indicator).
+See [PLAN.md](PLAN.md): native Android app (M3) and polish (auto-discovery,
+service, indicator).
 
 ## License
 

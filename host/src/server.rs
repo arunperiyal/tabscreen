@@ -1,14 +1,16 @@
 //! HTTP + WebSocket server: serves the web client and speaks the protocol in PLAN.md.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::{Html, IntoResponse};
+use axum::extract::{ConnectInfo, Query, State};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use tokio::sync::broadcast;
 
@@ -29,27 +31,67 @@ const MSG_CURSOR_IMAGE: u8 = 0x08;
 /// Largest monitor we create; H.264 encoders top out around 4096 per side.
 const MAX_SIDE: u32 = 4096;
 
-pub async fn serve(addr: SocketAddr, manager: Arc<Manager>) -> Result<()> {
-    let app = Router::new()
+#[derive(Clone)]
+struct AppState {
+    manager: Arc<Manager>,
+    /// Required from non-local clients (Wi‑Fi). Local ones (USB via
+    /// `adb reverse`, which arrive on loopback) don't need it.
+    token: Option<Arc<str>>,
+}
+
+fn router(manager: Arc<Manager>, token: Option<Arc<str>>) -> Router {
+    Router::new()
         .route("/", get(|| async { Html(include_str!("../../web/index.html")) }))
         .route(
             "/client.js",
             get(|| async { ([("content-type", "text/javascript")], include_str!("../../web/client.js")) }),
         )
         .route("/ws", get(ws_handler))
-        .with_state(manager);
+        .with_state(AppState { manager, token })
+}
+
+/// Plain HTTP, for USB (`adb reverse` makes the tablet's localhost reach us).
+pub async fn serve(addr: SocketAddr, manager: Arc<Manager>, token: Option<Arc<str>>) -> Result<()> {
+    let app = router(manager, token).into_make_service_with_connect_info::<SocketAddr>();
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(manager): State<Arc<Manager>>) -> impl IntoResponse {
+/// HTTPS, for Wi‑Fi.
+pub async fn serve_tls(addr: SocketAddr, manager: Arc<Manager>, token: Arc<str>, access: &crate::wifi::Access) -> Result<()> {
+    let config = axum_server::tls_rustls::RustlsConfig::from_pem(
+        access.cert_pem.clone().into_bytes(),
+        access.key_pem.clone().into_bytes(),
+    )
+    .await
+    .context("loading TLS certificate")?;
+    let app = router(manager, Some(token)).into_make_service_with_connect_info::<SocketAddr>();
+    axum_server::bind_rustls(addr, config).serve(app).await.with_context(|| format!("HTTPS on {addr}"))?;
+    Ok(())
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(AppState { manager, token }): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if let Some(token) = token {
+        if !peer.ip().to_canonical().is_loopback() && query.get("t").map(String::as_str) != Some(&*token) {
+            eprintln!("server: rejected {peer}: missing or wrong token");
+            return (StatusCode::UNAUTHORIZED, "missing or wrong token").into_response();
+        }
+    }
     ws.on_upgrade(move |socket| async move {
         eprintln!("server: client connected");
         manager.client_connected();
         if let Err(e) = client(socket, &manager).await {
             // A tab closed or a cable pulled resets the connection; not worth an error.
-            let reset = e.chain().any(|c| c.to_string().contains("without closing handshake"));
+            let reset = e.chain().any(|c| {
+                let c = c.to_string();
+                c.contains("without closing handshake") || c.contains("close_notify")
+            });
             if !reset {
                 eprintln!("server: client error: {e:#}");
             }
@@ -60,6 +102,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(manager): State<Arc<Manager>>) -
         manager.client_disconnected();
         eprintln!("server: client disconnected");
     })
+    .into_response()
 }
 
 fn frame_message(frame: &EncodedFrame) -> Message {

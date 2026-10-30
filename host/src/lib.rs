@@ -6,3 +6,4 @@ pub mod mutter;
 pub mod server;
 pub mod session;
 pub mod usb;
+pub mod wifi;

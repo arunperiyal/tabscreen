@@ -215,10 +215,19 @@ addEventListener('resize', () => {
   if (helloSize && (now.w !== helloSize.w || now.h !== helloSize.h)) sendHello();
 });
 
+// Wi‑Fi URLs carry an access token in the fragment (#t=…), which never reaches
+// the server with the page request; pass it on the WebSocket instead.
+const token = new URLSearchParams(location.hash.slice(1)).get('t');
+let connectedOnce = false;
+let failures = 0;
+
 function connect() {
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  const query = token ? `?t=${encodeURIComponent(token)}` : '';
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${query}`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
+    connectedOnce = true;
+    failures = 0;
     sendHello();
     setStatus('connected, waiting for video…');
   };
@@ -251,7 +260,13 @@ function connect() {
   ws.onclose = () => {
     resetDecoder();
     slots.clear();
-    setStatus('disconnected, retrying…');
+    failures++;
+    // Never connected: most likely a missing/wrong token (the host rejects the WebSocket).
+    if (!connectedOnce && failures >= 3) {
+      setStatus('cannot connect: use the exact URL (with #t=…) printed by tabscreen-host');
+    } else {
+      setStatus('disconnected, retrying…');
+    }
     setTimeout(connect, 1000);
   };
 }
@@ -280,7 +295,7 @@ startEl.addEventListener('click', async () => {
 });
 
 if (!('VideoDecoder' in window)) {
-  setStatus('WebCodecs unavailable: open via http://localhost (USB) or HTTPS');
+  setStatus('WebCodecs unavailable: open http://localhost:8765 (USB) or the https:// URL from tabscreen-host');
 } else {
   connect();
 }

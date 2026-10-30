@@ -130,7 +130,7 @@ tabscreen/
 ├── .cargo/config.toml  # pins system pkg-config/cc (conda shadows them)
 ├── docs/protocol.md
 ├── host/               # Rust crate tabscreen-host
-│   ├── src/{main,session,mutter,display,capture,encoder,input,server,usb}.rs
+│   ├── src/{main,session,mutter,display,capture,encoder,input,server,usb,wifi}.rs
 │   └── examples/cursor_spike.rs
 ├── web/{index.html,client.js}
 ├── android/            # Gradle project (Kotlin), added in M3
@@ -239,7 +239,14 @@ Essentials (branch `m2-essentials`):
       monitor to 150–200 % in Settings and check touch.
 
 Later:
-- [ ] Self-signed HTTPS so the web client works over Wi‑Fi without adb; URL + QR in the terminal.
+- [x] **Wi‑Fi without adb** (`--wifi`, 2026-10-30): HTTPS on `[::]:8766` with a
+      self-signed certificate (rcgen; names: localhost, 127.0.0.1, LAN IP;
+      regenerated when the IP changes) and a 128-bit token required from
+      non-loopback clients (`?t=` on the WebSocket; the page URL carries it as
+      `#t=…`). Both stored in `~/.config/tabscreen/` (0600). URL + QR printed at
+      startup. Verified: 401 without/with a wrong token, 101 with it; headless
+      Chrome decodes over HTTPS with the untrusted certificate.
+- [ ] On the tablet: open the Wi‑Fi URL (ufw is active on the dev machine: open 8766).
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 
