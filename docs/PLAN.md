@@ -31,111 +31,17 @@ Verified on the dev machine (Ubuntu 26.04, GNOME Shell 50.1, Wayland):
 | Touch injection | `org.gnome.Mutter.RemoteDesktop` `Session.NotifyTouch*` (`SupportedDeviceTypes` `7` incl. **touchscreen**) | ✅ M0 |
 | Frames + cursor metadata from PipeWire | pipewire-rs consumer (`host/examples/cursor_spike.rs`) | ✅ M0 |
 | H.264 encode | `nvh264enc` (NVIDIA T600), `x264enc`, `openh264enc` | present |
-| H.264 encode (Intel VA) | `vah264enc` / `vah264lpenc` | **missing** — optional, see Setup |
+| H.264 encode (Intel VA) | `vah264enc` / `vah264lpenc` | missing — optional |
 
 Deskreen and similar tools can't do this: Electron's `desktopCapturer` only
 captures existing outputs, so they can only mirror.
 
-## Architecture
+## Design
 
-```
- Linux host (tabscreen-host, Rust)                            Tablet
- ─────────────────────────────────                            ──────
- Mutter RemoteDesktop session (zbus)
-   ├─ ScreenCast Session.RecordVirtual(cursor-mode=metadata) ─┐
-   └─ touch injection on the same session                     │
-                                                              ▼
- PipeWire consumer (pipewire-rs) ── frames (BGRx, SHM) ─► GStreamer appsrc ─► encoder ─► appsink
-         │                                                    (x264enc | nvh264enc), H.264 Annex B
-         └── SPA_META_Cursor ─► cursor position / image ─┐            │
-                                                         ▼            ▼
-                                          WebSocket server (tokio + axum) ═══ USB (adb reverse) / Wi‑Fi ═══► client:
-                                                         ▲                                                   decode video,
- RD NotifyTouch* ◄───────────────────────────────────────┘◄──────────── touch events ◄────────────────────── draw cursor on top
-```
-
-### Why Rust (decided 2026-10-29, see M0)
-
-With the cursor drawn into the frames (embedded mode), Mutter sends no new frame
-when only the pointer moves on a virtual monitor, so the cursor updates once a
-second. With cursor-mode metadata, Mutter sends cursor-only buffers at 60 Hz, but
-GStreamer's `pipewiresrc` drops them ("Buffer is empty"). Reading PipeWire
-directly needs native bindings; Python has none usable, so the host is Rust.
-
-### Host (`host/`, Rust crate `tabscreen-host`)
-
-1. **`mutter.rs`** — Mutter session over D-Bus (zbus, blocking):
-   - `RemoteDesktop.CreateSession()` → RD session; read its `SessionId`
-   - `ScreenCast.CreateSession({remote-desktop-session-id})` →
-     `Session.RecordVirtual({cursor-mode: 2 (metadata)})` → stream object path
-   - Wait for `Stream.PipeWireStreamAdded(u node_id)` after `RD Session.Start()`
-   - Touch: `NotifyTouchDown/Motion(stream_path, slot, x, y)`, `NotifyTouchUp(slot)`
-   - No permission dialog. Mutter ends the session when the D-Bus connection or
-     the stream consumer goes away.
-2. **`capture.rs`** — PipeWire consumer on its own thread (pipewire-rs):
-   - `EnumFormat`: BGRx/BGRA/RGBx/RGBA, fixed `W×H` (sets the monitor size),
-     framerate 0/1, max 60/1. Requests `SPA_META_Cursor` (up to 384×384).
-   - Buffers with pixels → copy to a `gst::Buffer` → encoder `appsrc`.
-     Keep the last frame so a keyframe can be produced on demand while the
-     screen is static.
-   - Cursor metadata → `CursorEvent::{Move{x,y}, Image{w,h,hot_x,hot_y,rgba}}`.
-   - Later: DMA‑BUF import to avoid the copy.
-3. **`encoder.rs`** — GStreamer (gstreamer-rs):
-   `appsrc ! videoconvert ! <encoder> ! h264parse config-interval=-1
-   ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink`
-   - Low latency, no B-frames, IDR on demand (`GstForceKeyUnit`).
-     - `x264enc tune=zerolatency speed-preset=ultrafast key-int-max=600 bframes=0`
-     - `nvh264enc preset=low-latency-hq zerolatency=true bframes=0`
-4. **`server.rs`** — tokio + axum: `GET /` serves `web/`, `WS /ws` speaks the
-   protocol below. One active client; frames go out via a channel that drops
-   stale frames if the client falls behind.
-5. **`main.rs`** — CLI: `tabscreen-host [--port 8765] [--size 2000x1200]
-   [--encoder auto|x264|nvenc] [--usb]`. `--usb` runs `adb reverse tcp:PORT tcp:PORT`.
-
-### Clients
-
-- **Phase 1 — web client** (`web/`): plain HTML/JS. WebCodecs `VideoDecoder`
-  (H.264) → `<canvas>` fullscreen; cursor image drawn on a second canvas on top;
-  Pointer Events → touch messages. Needs no Android build.
-  - WebCodecs needs a *secure context*: `http://localhost` is fine (USB via
-    `adb reverse`). Wi‑Fi needs HTTPS → host generates a self-signed cert (M2).
-- **Phase 2 — Android app** (`android/`, Kotlin): `MediaCodec` (H.264, low-latency
-  flag on API 30+) decoding into a `SurfaceView`; cursor as an overlay `View`;
-  immersive fullscreen; keep screen on; `MotionEvent` → touch messages.
-
-### Protocol (WebSocket, binary)
-
-All messages: 1-byte type + payload. Little-endian.
-
-| Dir | Type | Name | Payload |
-|---|---|---|---|
-| C→S | `0x01` | hello | UTF-8 JSON `{"w":2944,"h":1840,"dpr":2,"codecs":["h264"],"version":1}`: screen in device px; first message; sent again on rotation |
-| S→C | `0x02` | config | UTF-8 JSON `{"w":2944,"h":1840}`: sent whenever the session (re)starts; reset the decoder |
-| S→C | `0x03` | frame | `u8 flags` (bit0 = keyframe) · `u64 pts_us` · Annex B access unit |
-| C→S | `0x04` | touch | `u8 action` (0 down, 1 move, 2 up, 3 cancel) · `u8 slot` · `f32 x` · `f32 y` |
-| C→S | `0x05` | keyframe request | — |
-| both | `0x06` | ping/pong | `u64 t_us` (latency measurement) |
-| S→C | `0x07` | cursor move | `i32 x` · `i32 y` (monitor pixels; outside the monitor = hidden) |
-| S→C | `0x08` | cursor image | `u16 w` · `u16 h` · `u16 hot_x` · `u16 hot_y` · RGBA pixels (`w·h·4`; `w=0` = hidden) |
-
-`x, y` in touch messages are normalized to `[0,1]`. Full spec goes in
-`docs/protocol.md` once M1 settles it.
-
-## Repository layout
-
-```
-tabscreen/
-├── PLAN.md
-├── README.md
-├── .cargo/config.toml  # pins system pkg-config/cc (conda shadows them)
-├── docs/protocol.md
-├── host/               # Rust crate tabscreen-host
-│   ├── src/{main,session,mutter,display,capture,encoder,input,server,usb,wifi}.rs
-│   └── examples/cursor_spike.rs
-├── web/{index.html,client.js}
-├── android/            # Gradle project (Kotlin), added in M3
-└── scripts/            # M0 Python spikes, setup helpers
-```
+How the system works today — components, protocol, security model and the
+design decisions — is in [ARCHITECTURE.md](ARCHITECTURE.md). Building and
+testing: [DEVELOPMENT.md](DEVELOPMENT.md). This file tracks the roadmap and the
+findings behind each step.
 
 ## Milestones
 
@@ -183,7 +89,7 @@ Findings:
       overlay, touch → protocol, reconnect, fullscreen + wake lock on first tap.
 - [x] Keyframe on connect even when the screen is static (last frame re-encoded).
 - [x] Clean teardown: Ctrl+C removes the virtual monitor.
-- [x] `--usb` runs `adb reverse` (code done; not yet run against a tablet).
+- [x] `--usb` runs `adb reverse`.
 - [x] On the tablet (Motorola XT2571, 2944×1840, Chrome): touch, mouse cursor and
       moving windows between displays work. Wireless adb lags noticeably; USB is
       better.
@@ -214,13 +120,13 @@ Bugs found and fixed while testing:
 | Host CPU | ~240 % | ~80 % |
 | Bitrate | ~12 Mbit/s | ~13 Mbit/s |
 
-The host adds ~12–17 ms. The rest is transport and the tablet: the stream
-currently goes through a *wireless* adb tunnel. The client status line shows
-fps, Mbit/s, ping RTT and decode time per frame to break this down.
+The host adds ~12–17 ms. The rest is transport and the tablet; the lag first
+noticed came mostly from the *wireless adb* tunnel (USB and direct Wi‑Fi are
+better). The client status line shows fps, Mbit/s, ping RTT and decode time.
 
 ### M2 — Robustness ⏳ (essentials done 2026-10-30)
 
-Essentials (branch `m2-essentials`):
+Essentials:
 - [x] **Monitor follows the client.** No monitor exists until a client sends
       `hello`; it's created at the client's screen size (device pixels, even),
       recreated when a hello asks for another size (rotation), and removed 10 s
@@ -246,7 +152,8 @@ Later:
       `#t=…`). Both stored in `~/.config/tabscreen/` (0600). URL + QR printed at
       startup. Verified: 401 without/with a wrong token, 101 with it; headless
       Chrome decodes over HTTPS with the untrusted certificate.
-- [ ] On the tablet: open the Wi‑Fi URL (ufw is active on the dev machine: open 8766).
+- [x] On the tablet over Wi‑Fi: works and looks good (2026-10-30). ufw on the
+      dev machine needed `allow … port 8766`.
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 
@@ -267,7 +174,7 @@ is already embedded, so it is a single file plus system libraries.
       `-bad` (`h264parse`, `nvh264enc`), `-ugly` (`x264enc`).
 - [x] `.github/workflows/release.yml`: on `v*` tags, build on Ubuntu 24.04, check
       tag = Cargo version, smoke-test, attach `tabscreen-host-<version>-linux-x86_64.tar.gz`
-      (binary + README + LICENSE) and its SHA-256 to a GitHub Release. Manual runs
+      (binary, README, LICENSE, docs) and its SHA-256 to a GitHub Release. Manual runs
       only upload an artifact.
 - [ ] Optional `.deb` (`cargo deb`) declaring the runtime packages above.
 - [ ] Once M3 exists: signed release APK attached to the same release.
@@ -290,21 +197,14 @@ is already embedded, so it is a single file plus system libraries.
 | Risk | Mitigation |
 |---|---|
 | Mutter's private D-Bus API changes in a future GNOME | Keep it isolated in `mutter.rs`; spike scripts double as a regression check after upgrades |
-| Touch coordinates off with fractional scaling | Test at 100 % / 150 % / 200 % in M2; stream coords are logical px |
+| Touch coordinates off with fractional scaling | Resolved in M2: touch takes logical px; host divides by the tracked scale |
 | No frames when screen is static → client stalls on join | Keep the last raw frame; re-encode it as an IDR on connect / keyframe request |
 | NVIDIA hybrid graphics: DMA‑BUF import / `nvh264enc` quirks | Start with SHM frames → `x264enc` (CPU); add GPU path after it works |
 | CPU cost of copying BGRx frames (2560×1600×4 B at 60 fps ≈ 1 GB/s) | Fine for M1; DMA‑BUF path later |
-| WebCodecs unavailable over plain HTTP on LAN | USB/localhost first; HTTPS in M2; native app in M3 |
+| WebCodecs unavailable over plain HTTP on LAN | Resolved: `--wifi` serves HTTPS with a self-signed certificate |
 
 ## Dev environment notes
 
-- **Conda shadows system tools**: `miniconda3/bin` is earlier on `PATH` and shadows
-  `python3` (no `gi`), `gst-inspect-1.0` (no plugins), `pkg-config` and `cc`.
-  Use `/usr/bin/python3` for the M0 scripts and `/usr/bin/gst-inspect-1.0`.
-  `.cargo/config.toml` pins `/usr/bin/pkg-config` and `/usr/bin/cc` for Rust builds.
-- Rust build deps: `libpipewire-0.3-dev libspa-0.2-dev libgstreamer1.0-dev
-  libgstreamer-plugins-base1.0-dev libclang-dev` (installed).
-- Optional Intel VA encoder: `sudo apt install intel-media-va-driver-non-free`
-  (then check `/usr/bin/gst-inspect-1.0 vah264enc`).
-- Android: SDK at `~/Android/Sdk`, `adb` on PATH, use JDK 17
-  (`/usr/lib/jvm/java-17-openjdk-amd64`) for Gradle; default `java` is 11.
+See [DEVELOPMENT.md](DEVELOPMENT.md) (conda shadowing system tools, build
+dependencies). Not yet needed: Intel VA encoder (`intel-media-va-driver-non-free`
+for `vah264enc`); Android SDK at `~/Android/Sdk`, JDK 17 for Gradle (M3).

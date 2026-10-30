@@ -55,7 +55,7 @@ jobs:
           fi
           name=tabscreen-host-$version-linux-x86_64
           mkdir "$name"
-          cp host/target/release/tabscreen-host README.md LICENSE "$name/"
+          cp -r host/target/release/tabscreen-host README.md LICENSE docs "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
           echo "name=$name" >> "$GITHUB_OUTPUT"
