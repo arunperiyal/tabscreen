@@ -324,9 +324,19 @@ and a GTK video window, 30 fps source; your own log on the projector looked the 
 | GNOME's own recorder, whole desktop, same Firefox video | about 41 fps |
 | Buffers from PipeWire | about 40–55 per second, up to 99 % of them zero-size ("no new pixels") |
 
-Not yet known: the true frame rate of my test video windows (no ground truth), and
-the GNOME recorder on HDMI-1 alone. A bug found on the way and fixed separately:
-viewers that sent no acks were skipped forever (PR #6).
+**Cause found (2026-11-22, HDMI-1, test source counting its own frames):** a fullscreen
+30 fps full-frame video was drawn at 30.0 fps, but `RecordMonitor` delivered 0–8 fps
+with about 50 buffers/s, nearly all zero-size. GNOME's own recorder on the same area
+got 30.4 fps, and `RecordArea` on the monitor's rectangle through our consumer got
+30 fps at about 10 Mbit/s with no empty buffers. So Mutter's monitor capture
+mis-reports damage for this content; the area capture does not. Fix: mirrors of a
+plain monitor (scale 100 %, not rotated) use `RecordArea`; others still use
+`RecordMonitor`. Side effect: area capture delivers about 26 fps even when the
+screen is idle (tiny frames, so a little CPU, no bandwidth). Not tried: scaled or
+rotated monitors.
+
+A bug found on the way and fixed separately: viewers that sent no acks were skipped
+forever (PR #6).
 
 `m2d/capture-rate` (base: `main`; analysis, may end in a small fix)
 - [x] The `capture:` log now reports the negotiated frame rate (`framerate 0/1,
@@ -338,8 +348,12 @@ viewers that sent no acks were skipped forever (PR #6).
       "our stream parameters".
 - [ ] Try negotiating DMA-BUF and more buffers; try requesting an exact frame rate
       instead of a range; record the capture fps for each.
-- [ ] Compare with another consumer of the same monitor (for example the portal
-      screen cast in OBS) to see whether Mutter itself caps the rate.
+- [x] Compare with another consumer: GNOME's own recorder (ScreencastArea) gets 30 fps
+      where `RecordMonitor` gets 0–8; `RecordArea` fixes our mirrors (see above).
+- [ ] Verify `RecordArea` for scaled (125/150/200 %) and rotated monitors; until then
+      they keep `RecordMonitor`.
+- [ ] Idle cost of `RecordArea` (about 26 fps of tiny frames): measure host CPU on an
+      idle projector and drop unchanged frames if it matters.
 - [ ] **Real-device test (you):** play full-screen video on the projector and send
       the `capture:` and `encoder:` lines and how it looks on the phone.
 

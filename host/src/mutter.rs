@@ -60,9 +60,16 @@ impl ScreenStream {
         let props = HashMap::from([("cursor-mode", Value::from(cursor_mode as u32))]);
         let stream_path: OwnedObjectPath = match source {
             Source::Virtual => sc_session.call("RecordVirtual", &(props,)).context("RecordVirtual")?,
-            Source::Mirror(connector) => sc_session
-                .call("RecordMonitor", &(connector.as_str(), props))
-                .with_context(|| format!("RecordMonitor {connector} (see --list-monitors)"))?,
+            Source::Mirror(connector) => match crate::display::plain_monitor_rect(&conn, connector) {
+                // Capturing the monitor's area delivers every frame; RecordMonitor
+                // reported most updates of fullscreen video as empty (see PLAN, M2d).
+                Ok(Some((x, y, w, h))) => sc_session
+                    .call("RecordArea", &(x, y, w, h, props))
+                    .with_context(|| format!("RecordArea for {connector}"))?,
+                _ => sc_session
+                    .call("RecordMonitor", &(connector.as_str(), props))
+                    .with_context(|| format!("RecordMonitor {connector} (see --list-monitors)"))?,
+            },
         };
 
         let stream = Proxy::new_owned(conn.clone(), SC_BUS, stream_path.clone(), "org.gnome.Mutter.ScreenCast.Stream")?;
