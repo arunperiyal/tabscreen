@@ -81,6 +81,13 @@ HTTPS pages. The token in the URL is required for every Wi‑Fi connection —
 anyone with the URL can see and control the screen. If a firewall is active,
 open the port, e.g. `sudo ufw allow from 192.168.0.0/24 to any port 8766 proto tcp`.
 
+**Viewers outside your network:** forward a router port to this computer's
+`--wifi-port`, then pass the router's *public* address so the printed link and
+certificate use it instead of the LAN IP:
+`tabscreen-host --wifi --public-host <public-ip-or-dns>[:<external-port>]`.
+The address must be reachable from the internet; a `10.x`, `172.16–31.x` or
+`192.168.x` address is private and only works inside that network.
+
 `--usb` and `--wifi` can be combined. `--usb` is only needed for devices on a
 cable; when everyone uses Wi‑Fi, `--wifi` alone is enough.
 

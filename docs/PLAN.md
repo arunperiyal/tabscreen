@@ -209,16 +209,17 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 `.claude/rules/git-workflow.md`):
 
 `m2b/frame-ack` (base: `main`) — the client reports what it received.
-- [ ] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
+- [x] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
       frame arrives (before decoding). Document it in `ARCHITECTURE.md`.
-- [ ] Client sends the ack; host parses it per client and tracks bytes and frames
+- [x] Client sends the ack; host parses it per client and tracks bytes and frames
       in flight (sent − acked), with a test for the bookkeeping.
 
 `m2b/skip-slow-client` (base: `m2b/frame-ack`) — slow viewers drop frames, not time.
-- [ ] Above a budget (≈100 ms of video or 3 frames in flight), skip delta frames
+- [x] Above a budget (more than 3 frames unacked and the oldest older than 100 ms;
+      1 s when it is a keyframe), skip delta frames
       for *that client only*, then resume at the next keyframe (request one,
       throttled as today). Other clients are unaffected.
-- [ ] Count skipped frames per client; log them and show them in the status line.
+- [x] Count skipped frames per client and log them (`viewer was slow, skipped N frames`).
 
 `m2b/rate-control` (base: `main`; independent of the two above, can run in parallel)
 - [x] Constant bitrate with a small VBV buffer (150 ms) (`nvh264enc rc-mode=cbr
@@ -227,6 +228,7 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 - [x] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
 
 `m2b/retest` (base: the others merged)
+- [ ] Show skipped frames in the client status line (needs a host→client message).
 - [ ] Re-test the real setup: phone latency during animations should stay close
       to the tablet's. Record the numbers here and tick M2b.
 
