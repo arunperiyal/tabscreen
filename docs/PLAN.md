@@ -378,8 +378,8 @@ Design sketch (to be confirmed by the first branch):
   rather than lagging behind.
 - Options: `--audio` for all streams, and a per-stream `audio` flag (for example only
   the `audience` stream); later `audio=app:NAME`.
-- Per-client flow control (M2b) applies: a slow viewer drops audio first? No: drop
-  video first, because audio glitches are worse than a low frame rate.
+- Per-client flow control (M2b) applies to audio too: when a viewer falls behind, drop
+  video first and keep audio, because audio glitches are worse than a low frame rate.
 
 `m5/audio-capture` (base: `main`)
 - [ ] Spike: capture the default sink monitor and one application stream from PipeWire;
