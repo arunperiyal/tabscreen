@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
@@ -246,6 +246,8 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
     // Decoding can only start at a keyframe.
     let mut need_keyframe = true;
     let mut in_flight = InFlight::default();
+    // Frames dropped for this viewer since the last one sent.
+    let mut skipped = 0u64;
 
     loop {
         tokio::select! {
@@ -299,12 +301,27 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
             }
             frame = frames.recv() => match frame {
                 Ok(frame) => {
-                    if need_keyframe && !frame.keyframe {
+                    let now = Instant::now();
+                    // A viewer that can't keep up gets fewer frames, not more delay:
+                    // skip until its acks catch up, then resync at a keyframe.
+                    if in_flight.is_slow(now) {
+                        skipped += 1;
+                        need_keyframe = true;
+                        session.encoder.request_keyframe();
                         continue;
+                    }
+                    if need_keyframe && !frame.keyframe {
+                        // Caught up but not resynced: ask again (the host throttles requests).
+                        session.encoder.request_keyframe();
+                        continue;
+                    }
+                    if skipped > 0 {
+                        eprintln!("{}: viewer was slow, skipped {skipped} frames", manager.name());
+                        skipped = 0;
                     }
                     need_keyframe = false;
                     socket.send(frame_message(&frame)).await?;
-                    in_flight.sent(frame.pts_us, frame.data.len());
+                    in_flight.sent(frame.pts_us, frame.data.len(), frame.keyframe, now);
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("{}: client fell behind by {n} frames, waiting for a keyframe", manager.name());
