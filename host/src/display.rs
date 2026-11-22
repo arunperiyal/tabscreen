@@ -76,6 +76,26 @@ pub fn watch_scale(conn: Connection, connector: String) -> Result<Arc<Scale>> {
     Ok(scale)
 }
 
+/// Where an unscaled, unrotated monitor sits on the desktop: `(x, y, width, height)`
+/// in logical pixels. `None` for a scaled or rotated monitor, whose area capture
+/// has not been verified (callers fall back to capturing the monitor itself).
+pub fn plain_monitor_rect(conn: &Connection, connector: &str) -> Result<Option<(i32, i32, i32, i32)>> {
+    let (_serial, monitors, logical, _props): State = proxy(conn)?.call("GetCurrentState", &())?;
+    Ok(logical.into_iter().find_map(|(x, y, scale, transform, _primary, members, _props)| {
+        members.iter().find(|(c, ..)| c == connector)?;
+        let (_, modes, _) = monitors.iter().find(|m| m.0.0 == connector)?;
+        let (_, w, h, ..) = modes
+            .iter()
+            .find(|m| m.6.get("is-current").and_then(|v| bool::try_from(v).ok()).unwrap_or(false))?;
+        rect_if_plain(x, y, scale, transform, *w, *h)
+    }))
+}
+
+/// The rectangle for a monitor with this scale and transform, if it is plain.
+fn rect_if_plain(x: i32, y: i32, scale: f64, transform: u32, width: i32, height: i32) -> Option<(i32, i32, i32, i32)> {
+    ((scale - 1.0).abs() < 1e-6 && transform == 0).then_some((x, y, width, height))
+}
+
 /// A monitor as shown by `--list-monitors`.
 pub struct MonitorInfo {
     pub connector: String,
@@ -104,4 +124,17 @@ pub fn monitors(conn: &Connection) -> Result<Vec<MonitorInfo>> {
             Some(MonitorInfo { virtual_: vendor == "MetaVendor", connector, name, width, height, scale })
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_plain_monitors_get_an_area() {
+        assert_eq!(rect_if_plain(1920, 0, 1.0, 0, 1920, 1080), Some((1920, 0, 1920, 1080)));
+        assert_eq!(rect_if_plain(0, 0, 2.0, 0, 3840, 2160), None, "scaled");
+        assert_eq!(rect_if_plain(0, 0, 1.25, 0, 1920, 1080), None, "fractional scale");
+        assert_eq!(rect_if_plain(0, 0, 1.0, 1, 1080, 1920), None, "rotated");
+    }
 }

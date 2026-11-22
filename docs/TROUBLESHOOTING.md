@@ -126,6 +126,13 @@ Reload the page. A page opened before the host was updated doesn't send the fram
 acknowledgements the host uses to pace video. Current hosts keep sending to such
 a page, but an old page can't report a slow connection, so reload to get it back.
 
+**Mirrored monitor: video or animation is choppy or frozen**
+Fixed in the current version: mirrors capture the monitor's area, because GNOME's
+monitor capture reported most updates of fullscreen video as empty. Check the
+`capture:` line: a healthy mirror shows `N fps from PipeWire` close to the source
+frame rate and `0/s empty`. A monitor at a scale other than 100 % or rotated still
+uses the old capture; tell us if it is choppy.
+
 **Low fps when the screen is busy**
 Frames are only sent when something changes, so a static screen shows low fps —
 that's normal. During constant motion, compare `capture:` fps with `encoder:`
