@@ -224,7 +224,7 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 - [x] Constant bitrate with a small VBV buffer (150 ms) (`nvh264enc rc-mode=cbr
       vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so animations can't burst far
       above `--bitrate`.
-- [ ] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
+- [x] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
 
 `m2b/retest` (base: the others merged)
 - [ ] Re-test the real setup: phone latency during animations should stay close

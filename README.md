@@ -117,8 +117,9 @@ tabscreen-host --wifi \
 - **audience** — whatever the projector on `HDMI-1` shows, view-only, at
   `…/s/audience/`. Share its link or QR code; it can't open the `tab` stream.
 
-Stream syntax: `NAME=virtual[,view-only][,size=WxH]` or
-`NAME=mirror:CONNECTOR[,view-only]`. The first stream is also served at `/`.
+Stream syntax: `NAME=virtual[,view-only][,bitrate=KBPS][,size=WxH]` or
+`NAME=mirror:CONNECTOR[,view-only][,bitrate=KBPS]`. `bitrate` (500–100000)
+overrides `--bitrate` for that stream, e.g. a lower one for a phone audience. The first stream is also served at `/`.
 A mirror starts with the host and stays running; until the mirrored screen
 first changes after startup, viewers see "waiting for video". Known issue: a
 viewer on a slow connection can fall behind during animations — see
