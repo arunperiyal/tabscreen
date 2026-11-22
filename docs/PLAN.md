@@ -215,10 +215,11 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
       in flight (sent − acked), with a test for the bookkeeping.
 
 `m2b/skip-slow-client` (base: `m2b/frame-ack`) — slow viewers drop frames, not time.
-- [ ] Above a budget (≈100 ms of video or 3 frames in flight), skip delta frames
+- [x] Above a budget (more than 3 frames unacked and the oldest older than 100 ms;
+      1 s when it is a keyframe), skip delta frames
       for *that client only*, then resume at the next keyframe (request one,
       throttled as today). Other clients are unaffected.
-- [ ] Count skipped frames per client; log them and show them in the status line.
+- [x] Count skipped frames per client and log them (`viewer was slow, skipped N frames`).
 
 `m2b/rate-control` (base: `main`; independent of the two above, can run in parallel)
 - [ ] Constant bitrate with a small VBV buffer (`nvh264enc rc-mode=cbr
@@ -227,6 +228,7 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 - [ ] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
 
 `m2b/retest` (base: the others merged)
+- [ ] Show skipped frames in the client status line (needs a host→client message).
 - [ ] Re-test the real setup: phone latency during animations should stay close
       to the tablet's. Record the numbers here and tick M2b.
 

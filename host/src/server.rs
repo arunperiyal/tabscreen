@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 use crate::capture::CursorImage;
 use crate::encoder::EncodedFrame;
-use crate::flight::InFlight;
+use crate::flight::{Action, InFlight, decide};
 use crate::input::{InputCmd, TouchAction};
 use crate::session::{Manager, Session};
 
@@ -252,6 +252,8 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
     // Decoding can only start at a keyframe.
     let mut need_keyframe = true;
     let mut in_flight = InFlight::default();
+    // Frames dropped for this viewer since the last one sent.
+    let mut skipped = 0u64;
 
     loop {
         tokio::select! {
@@ -305,12 +307,30 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
             }
             frame = frames.recv() => match frame {
                 Ok(frame) => {
-                    if need_keyframe && !frame.keyframe {
-                        continue;
+                    let now = Instant::now();
+                    // A viewer that can't keep up gets fewer frames, not more delay:
+                    // skip until its acks catch up, then resync at a keyframe.
+                    match decide(in_flight.is_slow(now), need_keyframe, frame.keyframe) {
+                        Action::Skip => {
+                            skipped += 1;
+                            need_keyframe = true;
+                            session.encoder.request_keyframe();
+                            continue;
+                        }
+                        // Caught up but not resynced: ask again (the host throttles requests).
+                        Action::WaitForKeyframe => {
+                            session.encoder.request_keyframe();
+                            continue;
+                        }
+                        Action::Send => {}
+                    }
+                    if skipped > 0 {
+                        eprintln!("{}: viewer was slow, skipped {skipped} frames", manager.name());
+                        skipped = 0;
                     }
                     need_keyframe = false;
                     socket.send(frame_message(&frame)).await?;
-                    in_flight.sent(frame.pts_us, frame.data.len());
+                    in_flight.sent(frame.pts_us, frame.data.len(), frame.keyframe, now);
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("{}: client fell behind by {n} frames, waiting for a keyframe", manager.name());
