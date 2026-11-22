@@ -73,9 +73,42 @@ impl InFlight {
     }
 }
 
+/// What to do with one encoded frame for one viewer.
+#[derive(Debug, PartialEq)]
+pub enum Action {
+    /// Viewer is behind: drop the frame, and resync at a keyframe afterwards.
+    Skip,
+    /// Caught up but waiting for a keyframe to resume decoding: drop a delta frame.
+    WaitForKeyframe,
+    Send,
+}
+
+/// Decide for a frame. `need_keyframe` is set at connect and after any skipped frame.
+pub fn decide(slow: bool, need_keyframe: bool, keyframe: bool) -> Action {
+    if slow {
+        Action::Skip
+    } else if need_keyframe && !keyframe {
+        Action::WaitForKeyframe
+    } else {
+        Action::Send
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decide_covers_each_state() {
+        // Slow: everything is skipped, keyframes too, so the backlog can drain.
+        assert_eq!(decide(true, false, false), Action::Skip);
+        assert_eq!(decide(true, true, true), Action::Skip);
+        // Caught up, resyncing: only a keyframe gets through.
+        assert_eq!(decide(false, true, false), Action::WaitForKeyframe);
+        assert_eq!(decide(false, true, true), Action::Send);
+        // Normal streaming.
+        assert_eq!(decide(false, false, false), Action::Send);
+    }
 
     fn ms(base: Instant, n: u64) -> Instant {
         base + Duration::from_millis(n)

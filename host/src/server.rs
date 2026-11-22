@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 use crate::capture::CursorImage;
 use crate::encoder::EncodedFrame;
-use crate::flight::InFlight;
+use crate::flight::{Action, InFlight, decide};
 use crate::input::{InputCmd, TouchAction};
 use crate::session::{Manager, Session};
 
@@ -310,16 +310,19 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     let now = Instant::now();
                     // A viewer that can't keep up gets fewer frames, not more delay:
                     // skip until its acks catch up, then resync at a keyframe.
-                    if in_flight.is_slow(now) {
-                        skipped += 1;
-                        need_keyframe = true;
-                        session.encoder.request_keyframe();
-                        continue;
-                    }
-                    if need_keyframe && !frame.keyframe {
+                    match decide(in_flight.is_slow(now), need_keyframe, frame.keyframe) {
+                        Action::Skip => {
+                            skipped += 1;
+                            need_keyframe = true;
+                            session.encoder.request_keyframe();
+                            continue;
+                        }
                         // Caught up but not resynced: ask again (the host throttles requests).
-                        session.encoder.request_keyframe();
-                        continue;
+                        Action::WaitForKeyframe => {
+                            session.encoder.request_keyframe();
+                            continue;
+                        }
+                        Action::Send => {}
                     }
                     if skipped > 0 {
                         eprintln!("{}: viewer was slow, skipped {skipped} frames", manager.name());
