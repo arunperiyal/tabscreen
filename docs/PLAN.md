@@ -213,6 +213,9 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
       frame arrives (before decoding). Document it in `ARCHITECTURE.md`.
 - [x] Client sends the ack; host parses it per client and tracks bytes and frames
       in flight (sent − acked), with a test for the bookkeeping.
+- [ ] **Real-device test (you):** with the new build, tablet and phone connect and
+      play normally (no skipped-frame logs on a good link); the status line `rtt`
+      stays low. Check that a viewer that has not reloaded the page still works.
 
 `m2b/skip-slow-client` (base: `m2b/frame-ack`) — slow viewers drop frames, not time.
 - [x] Above a budget (more than 3 frames unacked and the oldest older than 100 ms;
@@ -220,15 +223,26 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
       for *that client only*, then resume at the next keyframe (request one,
       throttled as today). Other clients are unaffected.
 - [x] Count skipped frames per client and log them (`viewer was slow, skipped N frames`).
+- [ ] **Real-device test (you):** make the phone slow (far from the router, or
+      `tc netem`/throttle on the host's Wi‑Fi) during a slide animation. Expect
+      `audience: viewer was slow, skipped N frames` in the host log, lower fps on
+      the phone, `rtt` staying low, the tablet stream unaffected, and the picture
+      recovering when the link recovers.
 
 `m2b/rate-control` (base: `main`; independent of the two above, can run in parallel)
 - [x] Constant bitrate with a small VBV buffer (150 ms) (`nvh264enc rc-mode=cbr
       vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so animations can't burst far
       above `--bitrate`.
 - [x] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
+- [ ] **Real-device test (you):** run the audience at `bitrate=4000` and at the
+      default during the same animation; compare sharpness, fps and `rtt` on the
+      phone, and confirm the tablet stream keeps full quality. Note which setting
+      you would present with.
 
 `m2b/retest` (base: the others merged)
 - [ ] Show skipped frames in the client status line (needs a host→client message).
+- [ ] **Real-device test (you):** the real presenting setup (tablet, projector,
+      phone audience) over a whole talk's worth of slides.
 - [ ] Re-test the real setup: phone latency during animations should stay close
       to the tablet's. Record the numbers here and tick M2b.
 
@@ -248,6 +262,8 @@ what to adopt. Analysis first; no fixes in this task.
 - [ ] Define the test: same machine, same Wi‑Fi, same content (a slide animation, a
       dragged window, scrolling text). Record screen-to-screen latency by filming a
       running millisecond clock on the host and the viewer with a phone at 240 fps.
+- [ ] **Real-device test (you):** run the defined test on the tablet and the phone and
+      send the numbers and the filmed clips.
 - [ ] Measure TabScreen per stage: capture → encode → send → receive → decode →
       render, using the client status line (fps, Mbit/s, rtt, decode) plus
       timestamps added to the host log. Compare LAN Wi‑Fi, USB and `--public-host`.
@@ -259,6 +275,8 @@ what to adopt. Analysis first; no fixes in this task.
 - [ ] Measure AnyDesk in the same scenes: bitrate (router or `nethogs`), frame rate,
       and the latency from the filmed test; note its codec and settings (quality
       vs speed, resolution).
+- [ ] **Real-device test (you):** AnyDesk on the same tablet/phone and network, same
+      scenes, filmed the same way.
 
 `m2c/compare` (base: both measurement branches; docs only)
 - [ ] Compare the transport: TabScreen is WebSocket over TCP (head-of-line blocking,
@@ -271,6 +289,42 @@ what to adopt. Analysis first; no fixes in this task.
       and a ranked list of fixes (likely candidates: per-client flow control from
       M2b, CBR with a small buffer, lower-latency transport such as WebRTC or
       WebTransport, native decoder in M3).
+
+### M2d — Choppy mirror: capture delivers too few frames (2026-11-22)
+
+**Problem.** Playing video in the browser on the projector (`audience` mirror,
+1920×1080, NVENC) is choppy on the phone.
+
+**Measured** (host log, a full-screen test animation drawing at 59 fps):
+
+| Source | Captured from PipeWire | Encoder | Note |
+|---|---|---|---|
+| Mirror of HDMI-1 (a second mirror was also running) | 25–38 fps | in = out, 5 ms/frame | |
+| Mirror of eDP-1 (only consumer) | 14–30 fps | in = out, 5 ms/frame | |
+| Virtual monitor (M1, GL test window) | 57–60 fps | | for comparison |
+
+Findings: NVENC is not the limit (about 5 ms per frame, fps in = fps out) and the
+host sits near 0 % CPU. Both monitors run at about 60 Hz. The frames are lost
+*before* the host: GNOME's screen cast of a real monitor hands over about half the
+frames. `gnome-shell` was at about 73 % CPU while mirroring. Hypotheses, not yet
+tested: the compositor reads each frame back from the GPU because we only accept
+shared-memory buffers (hybrid Intel + NVIDIA); Mutter paces real-monitor casts
+below the refresh rate; the capture stream parameters (buffer count, frame rate
+range) hold it back.
+
+`m2d/capture-rate` (base: `main`; analysis, may end in a small fix)
+- [ ] Add a `--capture-stats` style log (or reuse the `capture:` line) that also
+      reports PipeWire buffer type (SHM or DMA-BUF), buffer count and negotiated
+      frame rate, so each run shows what was agreed.
+- [ ] Repeat the measurement with a single consumer on a virtual monitor and on a
+      real monitor with the same animation, to separate "real monitor" from
+      "our stream parameters".
+- [ ] Try negotiating DMA-BUF and more buffers; try requesting an exact frame rate
+      instead of a range; record the capture fps for each.
+- [ ] Compare with another consumer of the same monitor (for example the portal
+      screen cast in OBS) to see whether Mutter itself caps the rate.
+- [ ] **Real-device test (you):** play full-screen video on the projector and send
+      the `capture:` and `encoder:` lines and how it looks on the phone.
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).
