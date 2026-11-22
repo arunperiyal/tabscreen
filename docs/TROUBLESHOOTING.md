@@ -115,12 +115,16 @@ tablet's monitor. Move the mouse onto it (past the edge you arranged in Settings
 
 **One viewer (e.g. a phone) lags further and further behind, especially during
 animations**
-Known issue (see PLAN, *M2b*): the host doesn't yet drop frames for a viewer whose
-connection can't keep up, so video queues up and the delay grows. Check `rtt` on
-that device's status line — hundreds of ms during animations means queueing. Until
-per-client flow control lands, lower `--bitrate` (e.g. `6000`), move the device
-closer to the router or onto 5 GHz Wi‑Fi, and prefer USB for the presenter's
-tablet.
+The host now drops frames for a viewer that can't keep up (it logs
+`viewer was slow, skipped N frames`), so the picture gets choppier instead of
+more delayed. Check `rtt` on that device's status line: it should stay low. Also
+lower `--bitrate` or `bitrate=KBPS` for that stream, move the device closer to the
+router or onto 5 GHz Wi‑Fi, and prefer USB for the presenter's tablet.
+
+**The mouse pointer moves but the picture is frozen**
+Reload the page. A page opened before the host was updated doesn't send the frame
+acknowledgements the host uses to pace video. Current hosts keep sending to such
+a page, but an old page can't report a slow connection, so reload to get it back.
 
 **Low fps when the screen is busy**
 Frames are only sent when something changes, so a static screen shows low fps —
