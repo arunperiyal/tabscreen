@@ -199,7 +199,7 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
       `audience: client fell behind` lines.
 
 **Fix.**
-- [ ] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
+- [x] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
       frame arrives (before decoding).
 - [ ] Server: track bytes/frames in flight per client (sent − acked). Above a
       budget (≈100 ms of video or 3 frames), skip delta frames for *that client
