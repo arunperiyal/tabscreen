@@ -28,6 +28,9 @@ pub struct InFlight {
     /// Frames sent, oldest first.
     sent: VecDeque<Sent>,
     bytes: usize,
+    /// Set by the first ack. A viewer that never acks (an old page that was not
+    /// reloaded, a scripted client) can't be judged slow, or it would get no video.
+    acking: bool,
 }
 
 impl InFlight {
@@ -40,6 +43,7 @@ impl InFlight {
     /// The client received the frame with `pts_us` (and so everything before it,
     /// since TCP delivers in order).
     pub fn acked(&mut self, pts_us: u64) {
+        self.acking = true;
         while let Some(front) = self.sent.front() {
             if front.pts_us > pts_us {
                 break;
@@ -57,6 +61,9 @@ impl InFlight {
 
     /// Whether the viewer is too far behind to be sent more video.
     pub fn is_slow(&self, now: Instant) -> bool {
+        if !self.acking {
+            return false;
+        }
         let Some(oldest) = self.sent.front() else { return false };
         let limit = if oldest.keyframe { KEYFRAME_SLOW_AFTER } else { SLOW_AFTER };
         self.sent.len() > MAX_FRAMES && now.duration_since(oldest.at) > limit
@@ -144,23 +151,37 @@ mod tests {
     fn slow_needs_both_a_backlog_and_an_old_frame() {
         let t = Instant::now();
         let mut f = InFlight::default();
-        for i in 0..4 {
-            f.sent(i, 10, false, ms(t, i * 16));
+        f.acked(0); // the viewer acks, so it can be judged
+        for i in 1..=4 {
+            f.sent(i, 10, false, ms(t, (i - 1) * 16));
         }
         assert!(!f.is_slow(ms(t, 60)), "4 frames but the oldest is only 60 ms old");
         assert!(f.is_slow(ms(t, 150)));
-        f.acked(1);
+        f.acked(2);
         assert!(!f.is_slow(ms(t, 150)), "two frames left: within the count budget");
         assert!(!InFlight::default().is_slow(t));
+    }
+
+    #[test]
+    fn a_viewer_that_never_acks_is_not_slow() {
+        let t = Instant::now();
+        let mut f = InFlight::default();
+        for i in 0..10 {
+            f.sent(i, 10, false, t);
+        }
+        assert!(!f.is_slow(ms(t, 5000)), "old clients send no acks and must keep getting video");
+        f.acked(0);
+        assert!(f.is_slow(ms(t, 5000)), "once it acks, a long backlog does count");
     }
 
     #[test]
     fn an_unacked_keyframe_gets_more_time() {
         let t = Instant::now();
         let mut f = InFlight::default();
-        f.sent(0, 500_000, true, t);
-        for i in 1..4 {
-            f.sent(i, 10, false, ms(t, i * 16));
+        f.acked(0);
+        f.sent(1, 500_000, true, t);
+        for i in 2..=4 {
+            f.sent(i, 10, false, ms(t, (i - 1) * 16));
         }
         assert!(!f.is_slow(ms(t, 500)));
         assert!(f.is_slow(ms(t, 1100)));
