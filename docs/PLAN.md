@@ -312,11 +312,28 @@ shared-memory buffers (hybrid Intel + NVIDIA); Mutter paces real-monitor casts
 below the refresh rate; the capture stream parameters (buffer count, frame rate
 range) hold it back.
 
+Measurements so far (2026-11-22; host log, test videos in a separate Firefox profile
+and a GTK video window, 30 fps source; your own log on the projector looked the same):
+
+| Test | Result |
+|---|---|
+| Firefox video, laptop panel | 9–10 fps captured |
+| Firefox video, hardware decode off | 9 fps (so not the decoder) |
+| GTK video window, fullscreen on HDMI-1 | 1–14 fps, about 2 Mbit/s |
+| Cursor mode embedded instead of metadata | no change (so not the cursor path) |
+| GNOME's own recorder, whole desktop, same Firefox video | about 41 fps |
+| Buffers from PipeWire | about 40–55 per second, up to 99 % of them zero-size ("no new pixels") |
+
+Not yet known: the true frame rate of my test video windows (no ground truth), and
+the GNOME recorder on HDMI-1 alone. A bug found on the way and fixed separately:
+viewers that sent no acks were skipped forever (PR #6).
+
 `m2d/capture-rate` (base: `main`; analysis, may end in a small fix)
-- [ ] Add a `--capture-stats` style log (or reuse the `capture:` line) that also
-      reports PipeWire buffer type (SHM or DMA-BUF), buffer count and negotiated
-      frame rate, so each run shows what was agreed.
-- [ ] Repeat the measurement with a single consumer on a virtual monitor and on a
+- [x] The `capture:` log now reports the negotiated frame rate (`framerate 0/1,
+      max 60/1`), the buffer type, and buffers/s vs frames/s (cursor-only buffers
+      carry no frame).
+- [ ] Add a ground-truth frame counter to the test video (count frames drawn) and
+      repeat the measurement with a single consumer on a virtual monitor and on a
       real monitor with the same animation, to separate "real monitor" from
       "our stream parameters".
 - [ ] Try negotiating DMA-BUF and more buffers; try requesting an exact frame rate
