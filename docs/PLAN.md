@@ -222,10 +222,10 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 - [x] Count skipped frames per client and log them (`viewer was slow, skipped N frames`).
 
 `m2b/rate-control` (base: `main`; independent of the two above, can run in parallel)
-- [ ] Constant bitrate with a small VBV buffer (`nvh264enc rc-mode=cbr
+- [x] Constant bitrate with a small VBV buffer (150 ms) (`nvh264enc rc-mode=cbr
       vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so animations can't burst far
       above `--bitrate`.
-- [ ] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
+- [x] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
 
 `m2b/retest` (base: the others merged)
 - [ ] Show skipped frames in the client status line (needs a host→client message).

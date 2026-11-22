@@ -96,19 +96,31 @@ impl Stats {
 /// Keyframes are ~10× the size of other frames; don't let clients ask for them back to back.
 const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How much video the rate-control buffer may hold. A small buffer stops an
+/// animation from bursting far above the target bitrate (which queues up on a
+/// slow link); it also limits keyframes, so it can't be much smaller.
+const VBV_MS: u32 = 150;
+
+/// The encoder part of the pipeline: constant bitrate with a small VBV buffer.
+fn encoder_description(codec: Codec, bitrate_kbps: u32) -> String {
+    let vbv_kbit = bitrate_kbps * VBV_MS / 1000;
+    match codec {
+        Codec::Nvenc => format!(
+            // NVENC takes BGRx/RGBx directly and converts on the GPU.
+            "nvh264enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
+             rc-mode=cbr bitrate={bitrate_kbps} vbv-buffer-size={vbv_kbit} gop-size=600"
+        ),
+        _ => format!(
+            "videoconvert n-threads=4 ! video/x-raw,format=I420 ! x264enc tune=zerolatency \
+             speed-preset=ultrafast pass=cbr bitrate={bitrate_kbps} vbv-buf-capacity={VBV_MS} \
+             key-int-max=600 bframes=0 sliced-threads=true"
+        ),
+    }
+}
+
 impl Encoder {
     pub fn new(codec: Codec, bitrate_kbps: u32, frames: broadcast::Sender<Arc<EncodedFrame>>) -> Result<Arc<Self>> {
-        let encode = match codec.resolve() {
-            Codec::Nvenc => format!(
-                // NVENC takes BGRx/RGBx directly and converts on the GPU.
-                "nvh264enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
-                 bitrate={bitrate_kbps} gop-size=600"
-            ),
-            _ => format!(
-                "videoconvert n-threads=4 ! video/x-raw,format=I420 ! x264enc tune=zerolatency \
-                 speed-preset=ultrafast bitrate={bitrate_kbps} key-int-max=600 bframes=0 sliced-threads=true"
-            ),
-        };
+        let encode = encoder_description(codec.resolve(), bitrate_kbps);
         let desc = format!(
             "appsrc name=src is-live=true format=time max-buffers=2 leaky-type=downstream \
              ! {encode} ! video/x-h264,profile=constrained-baseline \
@@ -226,5 +238,18 @@ impl Encoder {
 
     pub fn stop(&self) {
         let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffer_is_sized_from_the_bitrate() {
+        let nv = encoder_description(Codec::Nvenc, 12000);
+        assert!(nv.contains("rc-mode=cbr") && nv.contains("vbv-buffer-size=1800"), "{nv}");
+        let x = encoder_description(Codec::X264, 6000);
+        assert!(x.contains("pass=cbr") && x.contains("bitrate=6000") && x.contains("vbv-buf-capacity=150"), "{x}");
     }
 }

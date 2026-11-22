@@ -72,6 +72,8 @@ struct StreamSpec {
     source: Source,
     touch: bool,
     size: Option<(u32, u32)>,
+    /// Overrides `--bitrate` for this stream (kbit/s).
+    bitrate: Option<u32>,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -97,12 +99,18 @@ fn parse_stream(s: &str) -> Result<StreamSpec, String> {
             _ => return Err(format!("unknown source {m:?}: use virtual or mirror:CONNECTOR")),
         },
     };
-    let mut spec = StreamSpec { name: name.to_string(), source, touch: true, size: None };
+    let mut spec = StreamSpec { name: name.to_string(), source, touch: true, size: None, bitrate: None };
     for option in parts {
         match option.split_once('=') {
             None if option == "view-only" => spec.touch = false,
             Some(("size", size)) if spec.source == Source::Virtual => spec.size = Some(parse_size(size)?),
-            _ => return Err(format!("unknown option {option:?} (view-only, size=WxH for virtual)")),
+            Some(("bitrate", kbps)) => {
+                spec.bitrate = Some(match kbps.parse() {
+                    Ok(k) if (500..=100_000).contains(&k) => k,
+                    _ => return Err("bitrate=KBPS must be a number from 500 to 100000".into()),
+                })
+            }
+            _ => return Err(format!("unknown option {option:?} (view-only, bitrate=KBPS, size=WxH for virtual)")),
         }
     }
     Ok(spec)
@@ -129,7 +137,7 @@ async fn main() -> Result<()> {
 
     let specs = if args.streams.is_empty() {
         let source = args.mirror.clone().map_or(Source::Virtual, Source::Mirror);
-        vec![StreamSpec { name: "main".into(), source, touch: !args.no_touch, size: args.size }]
+        vec![StreamSpec { name: "main".into(), source, touch: !args.no_touch, size: args.size, bitrate: None }]
     } else {
         args.streams.clone()
     };
@@ -152,7 +160,7 @@ async fn main() -> Result<()> {
                     name: spec.name.clone(),
                     source: spec.source.clone(),
                     codec: args.encoder,
-                    bitrate_kbps: args.bitrate,
+                    bitrate_kbps: spec.bitrate.unwrap_or(args.bitrate),
                     fixed_size: spec.size,
                     touch: spec.touch,
                 });
@@ -263,6 +271,15 @@ fn prepare_wifi(streams: &[Stream], port: u16, public: Option<&str>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_bitrate_option() {
+        let spec = parse_stream("audience=mirror:HDMI-1,view-only,bitrate=4000").unwrap();
+        assert_eq!((spec.bitrate, spec.touch), (Some(4000), false));
+        assert_eq!(parse_stream("tab=virtual").unwrap().bitrate, None);
+        assert!(parse_stream("tab=virtual,bitrate=abc").is_err());
+        assert!(parse_stream("tab=virtual,bitrate=10").is_err());
+    }
 
     #[test]
     fn public_host_with_and_without_port() {
