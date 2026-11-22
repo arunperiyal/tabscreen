@@ -59,6 +59,11 @@ struct Args {
     wifi: bool,
     #[arg(long, default_value_t = 8766)]
     wifi_port: u16,
+    /// Address viewers outside your network use, `HOST[:PORT]` (your router's
+    /// public IP or DNS name, with a port-forward to --wifi-port). It is put
+    /// in the printed links and the certificate instead of the LAN address.
+    #[arg(long, value_name = "HOST[:PORT]")]
+    public_host: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +173,7 @@ async fn main() -> Result<()> {
     if args.usb {
         usb::spawn(args.port);
     }
-    let wifi_server = if args.wifi { Some(prepare_wifi(&streams, args.wifi_port)?) } else { None };
+    let wifi_server = if args.wifi { Some(prepare_wifi(&streams, args.wifi_port, args.public_host.as_deref())?) } else { None };
     print_streams(&streams, args.port, args.encoder);
 
     let addr = SocketAddr::new(args.bind, args.port);
@@ -220,14 +225,30 @@ fn print_streams(streams: &[Stream], port: u16, encoder: Codec) {
     }
 }
 
+/// Split `--public-host` into host and external port; without a port the
+/// listening one is used. A bare IPv6 address (several colons) has no port.
+fn split_public_host(public: &str, default_port: u16) -> (String, String) {
+    match public.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') && p.parse::<u16>().is_ok() => (h.to_string(), p.to_string()),
+        _ => (public.trim_matches(['[', ']']).to_string(), default_port.to_string()),
+    }
+}
+
 /// Load the certificate and print each stream's Wi‑Fi URL and QR code.
-fn prepare_wifi(streams: &[Stream], port: u16) -> Result<(SocketAddr, wifi::Access)> {
+fn prepare_wifi(streams: &[Stream], port: u16, public: Option<&str>) -> Result<(SocketAddr, wifi::Access)> {
     let ip = wifi::lan_ip();
-    let access = wifi::certificate(ip)?;
-    let host = ip.map_or_else(|| "<this-computer's-IP>".to_string(), |ip| ip.to_string());
+    // `public` is "host" or "host:port"; the port is the one outsiders dial on the router.
+    let public = public.map(|p| split_public_host(p, port));
+    let mut names: Vec<String> = ip.iter().map(|ip| ip.to_string()).collect();
+    names.extend(public.iter().map(|(h, _)| h.clone()));
+    let access = wifi::certificate(&names)?;
+    let (host, shown_port) = match &public {
+        Some((h, p)) => (h.clone(), p.clone()),
+        None => (ip.map_or_else(|| "<this-computer's-IP>".to_string(), |ip| ip.to_string()), port.to_string()),
+    };
     for (i, stream) in streams.iter().enumerate() {
         let token = stream.token.as_deref().unwrap_or_default();
-        let url = format!("https://{host}:{port}{}#t={token}", path(streams, i));
+        let url = format!("https://{host}:{shown_port}{}#t={token}", path(streams, i));
         let power = if stream.manager.touch_enabled() { "see and control" } else { "see" };
         eprintln!("\nwifi: {} — anyone with this link can {power} it:\n\n  {url}\n", stream.manager.name());
         if ip.is_some() {
@@ -237,4 +258,18 @@ fn prepare_wifi(streams: &[Stream], port: u16) -> Result<(SocketAddr, wifi::Acce
     eprintln!("wifi: accept the certificate warning once (Advanced → Proceed).\n");
     // Listen on IPv6 and IPv4 where the system supports dual-stack sockets.
     Ok((SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port), access))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_host_with_and_without_port() {
+        let d = |h: &str, p: &str| (h.to_string(), p.to_string());
+        assert_eq!(split_public_host("203.0.113.5:9000", 8766), d("203.0.113.5", "9000"));
+        assert_eq!(split_public_host("talk.example.org", 8766), d("talk.example.org", "8766"));
+        assert_eq!(split_public_host("2001:db8::1", 8766), d("2001:db8::1", "8766"));
+        assert_eq!(split_public_host("host:notaport", 8766), d("host:notaport", "8766"));
+    }
 }

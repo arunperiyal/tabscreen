@@ -174,10 +174,17 @@ Later:
       Works. **The audience stream lags noticeably, especially during slide
       animations; the tablet stream is better.** See *M2b — Per-client flow control*.
       (`--usb` was not needed: it only maintains `adb reverse` for cable connections.)
+- [x] **Reach viewers outside the LAN** (2026-11-22): `--public-host HOST[:PORT]`
+      puts the router's public address (and external port) in the printed links and
+      the certificate instead of the LAN IP. Finding: the router's WAN address on the
+      dev network is `10.103.21.146`, a private address, so a port-forward there only
+      reaches devices on the upstream network; real internet viewers need a public IP
+      from the ISP, a forward on the upstream router, or a tunnel (Tailscale,
+      Cloudflare Tunnel). Not yet tested from outside.
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 
-### M2b — Per-client flow control (next)
+### M2b — Per-client flow control (in progress)
 
 **Problem.** Audience viewers lag far behind during slide animations, while the
 tablet stream stays responsive.
@@ -198,26 +205,70 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 - [ ] Host log: `encoder:` lines (Mbit/s during animations) and any
       `audience: client fell behind` lines.
 
-**Fix.**
+**Fix, by branch** (a stack: each branch is based on the one before it, see
+`.claude/rules/git-workflow.md`):
+
+`m2b/frame-ack` (base: `main`) — the client reports what it received.
 - [x] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
-      frame arrives (before decoding).
-- [ ] Server: track bytes/frames in flight per client (sent − acked). Above a
-      budget (≈100 ms of video or 3 frames), skip delta frames for *that client
-      only*, then resume at the next keyframe (request one, throttled as today).
-      Slow viewers get a lower frame rate instead of growing delay; others are
-      unaffected.
-- [ ] Count skipped frames per client and show it in the status line/host log.
-- [ ] Encoder rate control: constant bitrate with a small VBV buffer
-      (`nvh264enc rc-mode=cbr vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so
-      animations can't burst far above `--bitrate`.
+      frame arrives (before decoding). Document it in `ARCHITECTURE.md`.
+- [x] Client sends the ack; host parses it per client and tracks bytes and frames
+      in flight (sent − acked), with a test for the bookkeeping.
+
+`m2b/skip-slow-client` (base: `m2b/frame-ack`) — slow viewers drop frames, not time.
+- [ ] Above a budget (≈100 ms of video or 3 frames in flight), skip delta frames
+      for *that client only*, then resume at the next keyframe (request one,
+      throttled as today). Other clients are unaffected.
+- [ ] Count skipped frames per client; log them and show them in the status line.
+
+`m2b/rate-control` (base: `main`; independent of the two above, can run in parallel)
+- [ ] Constant bitrate with a small VBV buffer (`nvh264enc rc-mode=cbr
+      vbv-buffer-size=…`, x264 `vbv-buf-capacity`) so animations can't burst far
+      above `--bitrate`.
 - [ ] Per-stream `bitrate=KBPS` option, e.g. a lower bitrate for `audience`.
+
+`m2b/retest` (base: the others merged)
 - [ ] Re-test the real setup: phone latency during animations should stay close
-      to the tablet's.
+      to the tablet's. Record the numbers here and tick M2b.
 
 Later (if needed): adaptive bitrate per stream from the clients' ack timing;
 smaller keyframes (intra refresh) so resyncs don't spike.
 
 Workaround until then: `--bitrate 6000` lowers the peak data rate (softer image in motion).
+
+### M2c — Why is it slower than AnyDesk? (analysis)
+
+**Problem.** Side by side with AnyDesk on the same machine and network, TabScreen
+feels laggier, in motion (slide animations, window drags) and in the audience view.
+Goal: find out where the time goes and what AnyDesk does differently, then decide
+what to adopt. Analysis first; no fixes in this task.
+
+`m2c/measure-tabscreen` (base: `main`)
+- [ ] Define the test: same machine, same Wi‑Fi, same content (a slide animation, a
+      dragged window, scrolling text). Record screen-to-screen latency by filming a
+      running millisecond clock on the host and the viewer with a phone at 240 fps.
+- [ ] Measure TabScreen per stage: capture → encode → send → receive → decode →
+      render, using the client status line (fps, Mbit/s, rtt, decode) plus
+      timestamps added to the host log. Compare LAN Wi‑Fi, USB and `--public-host`.
+- [ ] Check whether frames are skipped or delayed on the host (PipeWire damage
+      pacing, 60 fps cap, the 1 fps keep-alive when static) and how the client
+      presents frames (render on arrival, not on a vsync queue).
+
+`m2c/measure-anydesk` (base: `main`)
+- [ ] Measure AnyDesk in the same scenes: bitrate (router or `nethogs`), frame rate,
+      and the latency from the filmed test; note its codec and settings (quality
+      vs speed, resolution).
+
+`m2c/compare` (base: both measurement branches; docs only)
+- [ ] Compare the transport: TabScreen is WebSocket over TCP (head-of-line blocking,
+      queues instead of dropping, see M2b); AnyDesk uses UDP with its own loss
+      handling. Test TCP vs a lossy link (`tc netem`) to see how much this matters.
+- [ ] Compare the video pipeline: rate control (CBR/VBV vs VBR bursts), GOP and
+      keyframe size, B-frames and lookahead off, encoder latency tuning, resolution
+      scaling under load, and software vs hardware decode in the browser.
+- [ ] Write the findings here: a table of stage latencies, the largest contributors,
+      and a ranked list of fixes (likely candidates: per-client flow control from
+      M2b, CBR with a small buffer, lower-latency transport such as WebRTC or
+      WebTransport, native decoder in M3).
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).
