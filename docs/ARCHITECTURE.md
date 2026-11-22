@@ -116,6 +116,7 @@ WebSocket at `/ws`, binary messages: 1 type byte + payload, little-endian.
 | both | `0x06` | ping / pong | `u64 t_us`; the host echoes it back (round-trip time) |
 | S→C | `0x07` | cursor move | `i32 x` · `i32 y` in device pixels; outside the monitor = hidden |
 | S→C | `0x08` | cursor image | `u16 w` · `u16 h` · `u16 hot_x` · `u16 hot_y` · RGBA pixels; `w = 0` = hidden |
+| C→S | `0x09` | frame ack | `u64 pts_us` of a frame that just arrived (before decoding); the host keeps frames/bytes in flight per client |
 
 Over Wi‑Fi the WebSocket URL carries the stream's token: `…/ws?t=<token>`.
 
