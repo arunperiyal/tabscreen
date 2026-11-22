@@ -225,29 +225,49 @@ fn read_frame(buf: &spa_sys::spa_buffer, width: usize, height: usize) -> Option<
     Some(out)
 }
 
+/// How a PipeWire buffer holds its pixels (`spa_data_type`).
+fn buffer_kind(type_: u32) -> &'static str {
+    match type_ {
+        spa_sys::SPA_DATA_MemPtr => "memory",
+        spa_sys::SPA_DATA_MemFd => "shared memory (memfd)",
+        spa_sys::SPA_DATA_DmaBuf => "DMA-BUF",
+        _ => "unknown",
+    }
+}
+
 /// Frame rate from PipeWire and time spent copying, logged every few seconds.
 struct Stats {
     since: Instant,
+    /// Buffers delivered, including cursor-only ones that carry no new frame.
+    buffers: u32,
     frames: u32,
     copy: Duration,
+    kind_logged: bool,
 }
 
 impl Stats {
     fn new() -> Self {
-        Self { since: Instant::now(), frames: 0, copy: Duration::ZERO }
+        Self { since: Instant::now(), buffers: 0, frames: 0, copy: Duration::ZERO, kind_logged: false }
     }
 
-    fn add(&mut self, copy: Duration) {
-        self.frames += 1;
-        self.copy += copy;
+    /// A buffer arrived; `copy` is the time spent copying it out if it held a frame.
+    fn add(&mut self, copy: Option<Duration>) {
+        self.buffers += 1;
+        if let Some(copy) = copy {
+            self.frames += 1;
+            self.copy += copy;
+        }
         let elapsed = self.since.elapsed();
-        if elapsed >= Duration::from_secs(5) {
+        if elapsed >= Duration::from_secs(5) && self.frames > 0 {
+            let secs = elapsed.as_secs_f64();
             eprintln!(
-                "capture: {:.0} fps from PipeWire, copy avg {:.1} ms",
-                self.frames as f64 / elapsed.as_secs_f64(),
+                "capture: {:.0} fps from PipeWire ({:.0} buffers/s, {:.0}/s cursor-only), copy avg {:.1} ms",
+                self.frames as f64 / secs,
+                self.buffers as f64 / secs,
+                (self.buffers - self.frames) as f64 / secs,
                 self.copy.as_secs_f64() * 1000.0 / self.frames as f64
             );
-            *self = Self::new();
+            *self = Self { kind_logged: true, ..Self::new() };
         }
     }
 }
@@ -314,7 +334,11 @@ fn run(
                 eprintln!("capture: unexpected format {:?}", info.format());
                 return;
             };
-            eprintln!("capture: negotiated {name} {w}x{h}");
+            let (rate, max) = (info.framerate(), info.max_framerate());
+            eprintln!(
+                "capture: negotiated {name} {w}x{h}, framerate {}/{}, max {}/{}",
+                rate.num, rate.denom, max.num, max.denom
+            );
             size.0 = (w as usize, h as usize);
             format_encoder.set_format(name, w, h);
             let _ = negotiated.send((w, h));
@@ -330,11 +354,16 @@ fn run(
                 return;
             }
             let buf = &*(*pw_buf).buffer;
+            if !stats.kind_logged && buf.n_datas > 0 {
+                stats.kind_logged = true;
+                eprintln!("capture: buffers are {}", buffer_kind((*buf.datas).type_));
+            }
             read_cursor(buf, &cursor);
             if w > 0 {
                 let start = Instant::now();
-                if let Some(frame) = read_frame(buf, w, h) {
-                    stats.add(start.elapsed());
+                let frame = read_frame(buf, w, h);
+                stats.add(frame.as_ref().map(|_| start.elapsed()));
+                if let Some(frame) = frame {
                     encoder.push(frame);
                 }
             }

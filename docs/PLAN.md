@@ -313,9 +313,9 @@ below the refresh rate; the capture stream parameters (buffer count, frame rate
 range) hold it back.
 
 `m2d/capture-rate` (base: `main`; analysis, may end in a small fix)
-- [ ] Add a `--capture-stats` style log (or reuse the `capture:` line) that also
-      reports PipeWire buffer type (SHM or DMA-BUF), buffer count and negotiated
-      frame rate, so each run shows what was agreed.
+- [x] The `capture:` log now reports the negotiated frame rate (`framerate 0/1,
+      max 60/1`), the buffer type, and buffers/s vs frames/s (cursor-only buffers
+      carry no frame).
 - [ ] Repeat the measurement with a single consumer on a virtual monitor and on a
       real monitor with the same animation, to separate "real monitor" from
       "our stream parameters".
