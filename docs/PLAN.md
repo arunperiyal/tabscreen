@@ -174,6 +174,13 @@ Later:
       Works. **The audience stream lags noticeably, especially during slide
       animations; the tablet stream is better.** See *M2b — Per-client flow control*.
       (`--usb` was not needed: it only maintains `adb reverse` for cable connections.)
+- [x] **Reach viewers outside the LAN** (2026-11-22): `--public-host HOST[:PORT]`
+      puts the router's public address (and external port) in the printed links and
+      the certificate instead of the LAN IP. Finding: the router's WAN address on the
+      dev network is `10.103.21.146`, a private address, so a port-forward there only
+      reaches devices on the upstream network; real internet viewers need a public IP
+      from the ISP, a forward on the upstream router, or a tunnel (Tailscale,
+      Cloudflare Tunnel). Not yet tested from outside.
 - [ ] Encoder fallback at runtime (NVENC present but failing → x264).
 - [ ] Ping/latency stats in the host log.
 
@@ -218,6 +225,36 @@ Later (if needed): adaptive bitrate per stream from the clients' ack timing;
 smaller keyframes (intra refresh) so resyncs don't spike.
 
 Workaround until then: `--bitrate 6000` lowers the peak data rate (softer image in motion).
+
+### M2c — Why is it slower than AnyDesk? (analysis)
+
+**Problem.** Side by side with AnyDesk on the same machine and network, TabScreen
+feels laggier, in motion (slide animations, window drags) and in the audience view.
+Goal: find out where the time goes and what AnyDesk does differently, then decide
+what to adopt. Analysis first; no fixes in this task.
+
+- [ ] Define the test: same machine, same Wi‑Fi, same content (a slide animation, a
+      dragged window, scrolling text). Record screen-to-screen latency by filming a
+      running millisecond clock on the host and the viewer with a phone at 240 fps.
+- [ ] Measure TabScreen per stage: capture → encode → send → receive → decode →
+      render, using the client status line (fps, Mbit/s, rtt, decode) plus
+      timestamps added to the host log. Compare LAN Wi‑Fi, USB and `--public-host`.
+- [ ] Measure AnyDesk in the same scenes: bitrate (router or `nethogs`), frame rate,
+      and the latency from the filmed test; note its codec and settings (quality
+      vs speed, resolution).
+- [ ] Compare the transport: TabScreen is WebSocket over TCP (head-of-line blocking,
+      queues instead of dropping, see M2b); AnyDesk uses UDP with its own loss
+      handling. Test TCP vs a lossy link (`tc netem`) to see how much this matters.
+- [ ] Compare the video pipeline: rate control (CBR/VBV vs VBR bursts), GOP and
+      keyframe size, B-frames and lookahead off, encoder latency tuning, resolution
+      scaling under load, and software vs hardware decode in the browser.
+- [ ] Check whether frames are skipped or delayed on the host (PipeWire damage
+      pacing, 60 fps cap, the 1 fps keep-alive when static) and how the client
+      presents frames (render on arrival, not on a vsync queue).
+- [ ] Write the findings here: a table of stage latencies, the largest contributors,
+      and a ranked list of fixes (likely candidates: per-client flow control from
+      M2b, CBR with a small buffer, lower-latency transport such as WebRTC or
+      WebTransport, native decoder in M3).
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).
