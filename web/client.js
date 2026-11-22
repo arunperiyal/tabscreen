@@ -2,7 +2,7 @@
 // cursor on an overlay, and sends touches back. Protocol: see PLAN.md.
 'use strict';
 
-const MSG = { HELLO: 1, CONFIG: 2, FRAME: 3, TOUCH: 4, KEYFRAME_REQUEST: 5, PING: 6, CURSOR_MOVE: 7, CURSOR_IMAGE: 8 };
+const MSG = { HELLO: 1, CONFIG: 2, FRAME: 3, TOUCH: 4, KEYFRAME_REQUEST: 5, PING: 6, CURSOR_MOVE: 7, CURSOR_IMAGE: 8, FRAME_ACK: 9 };
 const TOUCH = { DOWN: 0, MOVE: 1, UP: 2, CANCEL: 3 };
 
 const screenCanvas = document.getElementById('screen');
@@ -112,6 +112,11 @@ function onFrame(view, buffer) {
   const pts = Number(view.getBigUint64(2, true));
   const data = new Uint8Array(buffer, 10);
   stats.bytes += data.length;
+  // Tell the host the frame arrived (before decoding) so it can see our backlog.
+  const ack = new DataView(new ArrayBuffer(9));
+  ack.setUint8(0, MSG.FRAME_ACK);
+  ack.setBigUint64(1, BigInt(pts), true);
+  send(ack.buffer);
 
   const chunk = new EncodedVideoChunk({ type: keyframe ? 'key' : 'delta', timestamp: pts, data });
   if (decoderState === 'none' && keyframe) {

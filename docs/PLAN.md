@@ -209,9 +209,9 @@ the phone, encoder rate control letting bursts exceed `--bitrate`.
 `.claude/rules/git-workflow.md`):
 
 `m2b/frame-ack` (base: `main`) — the client reports what it received.
-- [ ] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
+- [x] Protocol: C→S `0x09` *frame ack* (`u64 pts_us`), sent by the client when a
       frame arrives (before decoding). Document it in `ARCHITECTURE.md`.
-- [ ] Client sends the ack; host parses it per client and tracks bytes and frames
+- [x] Client sends the ack; host parses it per client and tracks bytes and frames
       in flight (sent − acked), with a test for the bookkeeping.
 
 `m2b/skip-slow-client` (base: `m2b/frame-ack`) — slow viewers drop frames, not time.

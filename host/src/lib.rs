@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod display;
 pub mod encoder;
+pub mod flight;
 pub mod input;
 pub mod mutter;
 pub mod server;

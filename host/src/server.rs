@@ -16,6 +16,7 @@ use tokio::sync::broadcast;
 
 use crate::capture::CursorImage;
 use crate::encoder::EncodedFrame;
+use crate::flight::InFlight;
 use crate::input::{InputCmd, TouchAction};
 use crate::session::{Manager, Session};
 
@@ -27,6 +28,7 @@ const MSG_KEYFRAME_REQUEST: u8 = 0x05;
 const MSG_PING: u8 = 0x06;
 const MSG_CURSOR_MOVE: u8 = 0x07;
 const MSG_CURSOR_IMAGE: u8 = 0x08;
+const MSG_FRAME_ACK: u8 = 0x09;
 
 /// Largest monitor we create; H.264 encoders top out around 4096 per side.
 const MAX_SIDE: u32 = 4096;
@@ -149,6 +151,12 @@ fn open(
     .into_response()
 }
 
+/// The `pts_us` in a frame-ack message (`0x09` + `u64`), if well formed.
+fn parse_frame_ack(data: &[u8]) -> Option<u64> {
+    let bytes = data.get(1..9)?.try_into().ok()?;
+    Some(u64::from_le_bytes(bytes))
+}
+
 fn frame_message(frame: &EncodedFrame) -> Message {
     let mut msg = Vec::with_capacity(10 + frame.data.len());
     msg.push(MSG_FRAME);
@@ -243,6 +251,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
     socket.send(cursor_move_message(current_position)).await?;
     // Decoding can only start at a keyframe.
     let mut need_keyframe = true;
+    let mut in_flight = InFlight::default();
 
     loop {
         tokio::select! {
@@ -260,6 +269,11 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                         session.encoder.request_keyframe();
                     }
                     Some(&MSG_PING) => socket.send(Message::Binary(data)).await?,
+                    Some(&MSG_FRAME_ACK) => {
+                        if let Some(pts) = parse_frame_ack(&data) {
+                            in_flight.acked(pts);
+                        }
+                    }
                     // Sent again when the tablet rotates.
                     Some(&MSG_HELLO) => {
                         wanted = parse_hello(manager.name(), &data[1..])?;
@@ -268,6 +282,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                         if !Arc::ptr_eq(&next, &session) {
                             session = next;
                             need_keyframe = true;
+                            in_flight.clear();
                             start_session(&mut socket, &session, manager.touch_enabled()).await?;
                         }
                     }
@@ -284,6 +299,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                 if !Arc::ptr_eq(&next, &session) {
                     session = next;
                     need_keyframe = true;
+                    in_flight.clear();
                     start_session(&mut socket, &session, manager.touch_enabled()).await?;
                 }
             }
@@ -294,6 +310,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     }
                     need_keyframe = false;
                     socket.send(frame_message(&frame)).await?;
+                    in_flight.sent(frame.pts_us, frame.data.len());
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("{}: client fell behind by {n} frames, waiting for a keyframe", manager.name());
@@ -311,5 +328,29 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                 socket.send(cursor_image_message(&current)).await?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_ack_parsing() {
+        let mut msg = vec![MSG_FRAME_ACK];
+        msg.extend_from_slice(&123_456_789u64.to_le_bytes());
+        assert_eq!(parse_frame_ack(&msg), Some(123_456_789));
+        assert_eq!(parse_frame_ack(&msg[..8]), None, "truncated");
+        assert_eq!(parse_frame_ack(&[MSG_FRAME_ACK]), None);
+    }
+
+    #[test]
+    fn frame_message_layout_matches_the_protocol() {
+        let frame = EncodedFrame { keyframe: true, pts_us: 7, data: vec![1, 2, 3] };
+        let Message::Binary(bytes) = frame_message(&frame) else { panic!("not binary") };
+        assert_eq!(bytes[0], MSG_FRAME);
+        assert_eq!(bytes[1], 1);
+        assert_eq!(u64::from_le_bytes(bytes[2..10].try_into().unwrap()), 7);
+        assert_eq!(&bytes[10..], &[1, 2, 3]);
     }
 }
