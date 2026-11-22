@@ -354,8 +354,75 @@ forever (PR #6).
       they keep `RecordMonitor`.
 - [ ] Idle cost of `RecordArea` (about 26 fps of tiny frames): measure host CPU on an
       idle projector and drop unchanged frames if it matters.
-- [ ] **Real-device test (you):** play full-screen video on the projector and send
+- [x] **Real-device test (you):** play full-screen video on the projector and send
       the `capture:` and `encoder:` lines and how it looks on the phone.
+      Result (2026-11-22): after the `RecordArea` fix, browser video on HDMI-1 looks
+      good on the viewer. Not yet compared with AnyDesk (M2c).
+
+### M5 — Audio (planned)
+
+Send the computer's sound to the viewer, for videos and talks. Off by default,
+because the link already gives access to the screen and audio would add what the
+room hears.
+
+Design sketch (to be confirmed by the first branch):
+- Capture from PipeWire: the default sink's monitor (everything), or one
+  application's output stream (only the presentation). Opus (`opusenc`, low-delay
+  settings, 10–20 ms frames, 64–128 kbit/s) through the existing GStreamer setup.
+- Protocol: S→C `0x0A` audio frame (`u64 pts_us` · Opus packet), same clock as video
+  `pts_us`, so the client can keep lip sync. The `config` message says whether audio
+  exists. Document it in `ARCHITECTURE.md`.
+- Client: WebCodecs `AudioDecoder` (Opus) into an `AudioContext`; starts on the first
+  tap (browsers block sound before a gesture, which the page already waits for); a
+  mute button; the jitter buffer stays small (about 40–60 ms) and drops late audio
+  rather than lagging behind.
+- Options: `--audio` for all streams, and a per-stream `audio` flag (for example only
+  the `audience` stream); later `audio=app:NAME`.
+- Per-client flow control (M2b) applies to audio too: when a viewer falls behind, drop
+  video first and keep audio, because audio glitches are worse than a low frame rate.
+
+`m5/audio-capture` (base: `main`)
+- [ ] Spike: capture the default sink monitor and one application stream from PipeWire;
+      record which is available on GNOME 50 without extra permissions.
+- [ ] Opus encode with low-latency settings; measure encode time and bitrate.
+- [ ] `--audio` / per-stream `audio` option and the `config` flag; tests for option
+      parsing.
+- [ ] **Real-device test (you):** run with `--audio`; check that the host log shows audio
+      frames at the expected rate and that nothing about video changes.
+
+`m5/audio-transport` (base: `m5/audio-capture`)
+- [ ] Protocol `0x0A` audio frame; send to viewers that asked for audio; document it.
+- [ ] Skip audio for clients that never ack, like video (see M2b); tests.
+- [ ] **Real-device test (you):** a viewer that has not tapped yet still gets video and
+      no errors.
+
+`m5/audio-client` (base: `m5/audio-transport`)
+- [ ] Decode with `AudioDecoder`, play through `AudioContext`, mute button, status line
+      shows audio buffer size.
+- [ ] Lip sync against video `pts_us`; measure drift over 10 minutes.
+- [ ] **Real-device test (you):** play a video with sound on the projector: phone and tablet
+      hear it, lip sync is acceptable, mute works, and sound does not stutter on
+      Wi‑Fi.
+
+`m5/audio-retest` (base: the others merged)
+- [ ] Real presenting setup with sound over a whole talk; record latency and any glitches
+      here; document `--audio` in the README and troubleshooting.
+
+### Ideas for later (not scheduled)
+
+Improvements we expect to make once the basics are solid:
+- Drop unchanged frames when a mirror is idle (area capture sends about 26 fps of
+  tiny frames), and verify `RecordArea` on scaled and rotated monitors (M2d).
+- Adaptive bitrate per stream from the clients' ack timing; intra refresh so resyncs
+  don't spike (M2b).
+- Close the gap with AnyDesk (M2c): lower-latency transport (WebRTC or WebTransport
+  instead of WebSocket over TCP), native decoder (M3).
+- Runtime encoder fallback (NVENC failing → x264); latency stats in the host log (M2).
+- Reaching viewers outside the network without a port-forward: tunnel (Tailscale,
+  Cloudflare Tunnel) documented as the recommended way; today `--public-host` needs a
+  public address.
+- Per-viewer quality choice on the page (resolution and bitrate), and a viewer list
+  with disconnect on the host.
 
 ### M3 — Native Android app (2–3 days)
 - [ ] Gradle project (JDK 17, Kotlin, minSdk 26).
