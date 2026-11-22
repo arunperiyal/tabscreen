@@ -59,6 +59,11 @@ struct Args {
     wifi: bool,
     #[arg(long, default_value_t = 8766)]
     wifi_port: u16,
+    /// Address viewers outside your network use, `HOST[:PORT]` (your router's
+    /// public IP or DNS name, with a port-forward to --wifi-port). It is put
+    /// in the printed links and the certificate instead of the LAN address.
+    #[arg(long, value_name = "HOST[:PORT]")]
+    public_host: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +173,7 @@ async fn main() -> Result<()> {
     if args.usb {
         usb::spawn(args.port);
     }
-    let wifi_server = if args.wifi { Some(prepare_wifi(&streams, args.wifi_port)?) } else { None };
+    let wifi_server = if args.wifi { Some(prepare_wifi(&streams, args.wifi_port, args.public_host.as_deref())?) } else { None };
     print_streams(&streams, args.port, args.encoder);
 
     let addr = SocketAddr::new(args.bind, args.port);
@@ -221,13 +226,23 @@ fn print_streams(streams: &[Stream], port: u16, encoder: Codec) {
 }
 
 /// Load the certificate and print each stream's Wi‑Fi URL and QR code.
-fn prepare_wifi(streams: &[Stream], port: u16) -> Result<(SocketAddr, wifi::Access)> {
+fn prepare_wifi(streams: &[Stream], port: u16, public: Option<&str>) -> Result<(SocketAddr, wifi::Access)> {
     let ip = wifi::lan_ip();
-    let access = wifi::certificate(ip)?;
-    let host = ip.map_or_else(|| "<this-computer's-IP>".to_string(), |ip| ip.to_string());
+    // `public` is "host" or "host:port"; the port is the one outsiders dial on the router.
+    let public = public.map(|p| match p.rsplit_once(':') {
+        Some((h, pp)) if pp.parse::<u16>().is_ok() => (h.to_string(), pp.to_string()),
+        _ => (p.to_string(), port.to_string()),
+    });
+    let mut names: Vec<String> = ip.iter().map(|ip| ip.to_string()).collect();
+    names.extend(public.iter().map(|(h, _)| h.clone()));
+    let access = wifi::certificate(&names)?;
+    let (host, shown_port) = match &public {
+        Some((h, p)) => (h.clone(), p.clone()),
+        None => (ip.map_or_else(|| "<this-computer's-IP>".to_string(), |ip| ip.to_string()), port.to_string()),
+    };
     for (i, stream) in streams.iter().enumerate() {
         let token = stream.token.as_deref().unwrap_or_default();
-        let url = format!("https://{host}:{port}{}#t={token}", path(streams, i));
+        let url = format!("https://{host}:{shown_port}{}#t={token}", path(streams, i));
         let power = if stream.manager.touch_enabled() { "see and control" } else { "see" };
         eprintln!("\nwifi: {} — anyone with this link can {power} it:\n\n  {url}\n", stream.manager.name());
         if ip.is_some() {

@@ -66,16 +66,14 @@ pub fn token(stream: &str) -> Result<String> {
     }
 }
 
-/// Load the certificate, creating it if needed. It's regenerated when `ip`
-/// isn't among its names (e.g. a new DHCP lease).
-pub fn certificate(ip: Option<IpAddr>) -> Result<Access> {
+/// Load the certificate, creating it if needed. It's regenerated when one of
+/// `extra` (LAN IP, public host) isn't among its names, e.g. a new DHCP lease.
+pub fn certificate(extra: &[String]) -> Result<Access> {
     let dir = config_dir()?;
 
     let (cert_path, key_path, names_path) = (dir.join("cert.pem"), dir.join("key.pem"), dir.join("cert-names"));
     let mut names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-    if let Some(ip) = ip {
-        names.push(ip.to_string());
-    }
+    names.extend(extra.iter().cloned());
     let existing = (fs::read_to_string(&cert_path), fs::read_to_string(&key_path), fs::read_to_string(&names_path));
     if let (Ok(cert_pem), Ok(key_pem), Ok(cert_names)) = existing
         && names.iter().all(|n| cert_names.lines().any(|l| l == n)) {
