@@ -170,6 +170,9 @@ async fn main() -> Result<()> {
             .collect::<Result<_>>()?,
     );
 
+    for stream in streams.iter() {
+        stream.manager.spawn_stats_log(std::time::Duration::from_secs(10));
+    }
     for stream in streams.iter().filter(|s| s.manager.always_on()) {
         let manager = stream.manager.clone();
         tokio::task::spawn_blocking(move || {

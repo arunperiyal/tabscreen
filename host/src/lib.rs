@@ -6,5 +6,6 @@ pub mod input;
 pub mod mutter;
 pub mod server;
 pub mod session;
+pub mod stats;
 pub mod usb;
 pub mod wifi;

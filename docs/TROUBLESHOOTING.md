@@ -113,6 +113,15 @@ tablet's monitor. Move the mouse onto it (past the edge you arranged in Settings
    your screen activity means the computer is struggling; with x264, try
    `--encoder nvenc` if you have an NVIDIA GPU.
 
+**Reading the per-viewer line**
+Every 10 s, while a viewer is connected, each stream logs one line:
+`audience: 2 viewers | 192.168.1.7: 58 fps, 4.1 Mbit/s, ack delay 12 ms (max 40), skipped 0 | …`.
+*fps* and *Mbit/s* are what that viewer was sent. *ack delay* is the time from sending
+a frame to the viewer's acknowledgement, measured on the host (about the `rtt` on the
+viewer's status line). A delay that keeps growing means the link is the bottleneck;
+*skipped* above 0 means the host dropped frames for that viewer to keep it current.
+`no acks` means the page predates the ack message: reload it.
+
 **One viewer (e.g. a phone) lags further and further behind, especially during
 animations**
 The host now drops frames for a viewer that can't keep up (it logs

@@ -19,6 +19,7 @@ use crate::encoder::EncodedFrame;
 use crate::flight::{Action, InFlight, decide};
 use crate::input::{InputCmd, TouchAction};
 use crate::session::{Manager, Session};
+use crate::stats::ViewerStats;
 
 const MSG_HELLO: u8 = 0x01;
 const MSG_CONFIG: u8 = 0x02;
@@ -133,7 +134,10 @@ fn open(
     ws.on_upgrade(move |socket| async move {
         let clients = manager.client_connected();
         eprintln!("{}: client {peer} connected ({clients} connected)", manager.name());
-        if let Err(e) = client(socket, &manager).await {
+        let stats = manager.add_viewer(peer);
+        let result = client(socket, &manager, &stats).await;
+        manager.remove_viewer(&stats);
+        if let Err(e) = result {
             // A tab closed or a cable pulled resets the connection; not worth an error.
             let reset = e.chain().any(|c| {
                 let c = c.to_string();
@@ -222,7 +226,7 @@ async fn start_session(socket: &mut WebSocket, session: &Session, touch: bool) -
     Ok(())
 }
 
-async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
+async fn client(mut socket: WebSocket, manager: &Arc<Manager>, stats: &ViewerStats) -> Result<()> {
     // The client says how big its screen is before we create a monitor for it.
     let wanted = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -272,8 +276,10 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     }
                     Some(&MSG_PING) => socket.send(Message::Binary(data)).await?,
                     Some(&MSG_FRAME_ACK) => {
-                        if let Some(pts) = parse_frame_ack(&data) {
-                            in_flight.acked(pts);
+                        if let Some(pts) = parse_frame_ack(&data)
+                            && let Some(delay) = in_flight.acked(pts)
+                        {
+                            stats.acked(delay);
                         }
                     }
                     // Sent again when the tablet rotates.
@@ -313,6 +319,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     match decide(in_flight.is_slow(now), need_keyframe, frame.keyframe) {
                         Action::Skip => {
                             skipped += 1;
+                            stats.skipped();
                             need_keyframe = true;
                             session.encoder.request_keyframe();
                             continue;
@@ -331,6 +338,7 @@ async fn client(mut socket: WebSocket, manager: &Arc<Manager>) -> Result<()> {
                     need_keyframe = false;
                     socket.send(frame_message(&frame)).await?;
                     in_flight.sent(frame.pts_us, frame.data.len(), frame.keyframe, now);
+                    stats.sent(frame.data.len());
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("{}: client fell behind by {n} frames, waiting for a keyframe", manager.name());
