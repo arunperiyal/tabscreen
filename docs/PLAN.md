@@ -181,8 +181,8 @@ Later:
       reaches devices on the upstream network; real internet viewers need a public IP
       from the ISP, a forward on the upstream router, or a tunnel (Tailscale,
       Cloudflare Tunnel). Not yet tested from outside.
-- [ ] Encoder fallback at runtime (NVENC present but failing → x264).
-- [ ] Ping/latency stats in the host log.
+- [ ] Encoder fallback at runtime (NVENC present but failing → x264): see `m2/encoder-fallback`.
+- [ ] Ping/latency stats in the host log: see `m2/host-stats`.
 
 ### M2b — Per-client flow control (in progress)
 
@@ -407,6 +407,92 @@ Design sketch (to be confirmed by the first branch):
 `m5/audio-retest` (base: the others merged)
 - [ ] Real presenting setup with sound over a whole talk; record latency and any glitches
       here; document `--audio` in the README and troubleshooting.
+
+### Next branches (planned 2026-11-24)
+
+Order of work: the device-test backlog and the M2c measurements first (they decide
+what to build), then the small host fixes, then packaging, then audio (M5).
+Branches that do not depend on each other can run in parallel (see
+`.claude/rules/git-workflow.md`). Each branch is based on `main` unless noted.
+
+`m2/device-backlog` (docs only; no code)
+- [ ] Write one checklist that covers every open **Real-device test (you)** box: M2
+      (replug, rotate, 150–200 % scale), `m2b/frame-ack`, `m2b/skip-slow-client`,
+      `m2b/rate-control`, with exact steps and the lines to look for in the log.
+- [ ] **Real-device test (you):** run the checklist in one session and report the
+      results; Claude records them next to each box. Tick M2 and the M2b branches
+      only after that.
+
+`m2/encoder-fallback`
+- [ ] If the chosen encoder fails to start or errors at runtime (NVENC present but
+      failing), log it and restart the pipeline with x264; keep clients connected and
+      send a keyframe after the switch.
+- [ ] Tests: the fallback decision (which error triggers it, no loop when x264 also
+      fails). Document `--encoder` behaviour in the README and `--help`.
+- [ ] **Real-device test (you):** force an NVENC failure (for example an invalid
+      option through an environment variable added for testing, or running with the
+      nvcodec plugin hidden) and check the stream continues on x264 with one log line.
+
+`m2/host-stats`
+- [ ] Log once per 10 s per stream: fps in/out, Mbit/s, encode ms, clients, per-client
+      rtt (from the ping messages) and frames skipped.
+- [ ] Document the log lines in `docs/TROUBLESHOOTING.md`.
+- [ ] **Real-device test (you):** run with a tablet and a phone for a minute; the lines
+      appear and the rtt matches the client status line.
+
+`m2c/measure-tabscreen`, `m2c/measure-anydesk`, `m2c/compare` (already listed in M2c)
+- Do these before any transport work. Order: `measure-tabscreen` and `measure-anydesk`
+  in parallel, then `compare`.
+
+`m2e/transport` (base: `main`, after `m2c/compare`; scope decided by its findings)
+- [ ] Prototype a lower-latency transport (WebRTC data channel or WebTransport) behind
+      a flag, keeping WebSocket as the default; measure against the M2c numbers.
+- [ ] Decide with evidence: adopt, keep as option, or drop. Record the decision and
+      numbers here.
+- [ ] **Real-device test (you):** same filmed test as M2c on tablet and phone.
+
+`m2d/idle-mirror` (continues M2d; see its open tasks)
+- [ ] Verify `RecordArea` on scaled (125/150/200 %) and rotated monitors, then drop
+      the `RecordMonitor` fallback if it works.
+- [ ] Drop unchanged frames when a mirror is idle; measure host CPU before and after.
+- [ ] **Real-device test (you):** projector idle for 10 minutes: host CPU stays low;
+      video still plays smoothly when it starts.
+
+`m4/session-indicator` (security: Mutter's API gives no consent prompt, see M0)
+- [ ] Desktop notification when a client connects and disconnects, naming the stream
+      and whether touch is enabled.
+- [ ] Optional persistent indicator while any viewer is connected.
+- [ ] **Real-device test (you):** connect and disconnect a phone; the notification
+      appears each time.
+
+`m4/systemd-service` (base: `m2/host-stats`, so the logs are useful)
+- [ ] `systemd --user` unit with the options in a config file under
+      `~/.config/tabscreen/`; document install, start, and `journalctl` use.
+- [ ] **Real-device test (you):** enable the service, log out and in, connect a tablet.
+
+`ci/mutter-smoke`
+- [ ] Turn `scripts/spike_mutter.py` into a check that fails when virtual monitor,
+      frames or touch stop working; document how to run it after a GNOME upgrade
+      (CI cannot run GNOME, so this is a manual or local-VM check).
+
+`release/deb` (base: `main`)
+- [ ] `cargo deb` package declaring the runtime packages from the Release binary
+      section; attach it to the release workflow.
+- [ ] **Real-device test (you):** install the `.deb` on a clean Ubuntu and run.
+
+`docs/tunnel`
+- [ ] Document Tailscale and Cloudflare Tunnel as the recommended way to reach viewers
+      outside the LAN, with the exact commands and what to pass to `--public-host`.
+- [ ] **Real-device test (you):** open the stream from a phone on mobile data.
+
+`m6/viewer-controls` (after M2b is ticked)
+- [ ] Per-viewer quality choice on the page (resolution and bitrate).
+- [ ] Viewer list on the host with disconnect.
+- [ ] **Real-device test (you):** lower the quality from the phone; bitrate drops for
+      that viewer only.
+
+Then: M5 audio branches (below), and M3 native Android app once `m2e/transport`
+has decided the protocol.
 
 ### Ideas for later (not scheduled)
 
