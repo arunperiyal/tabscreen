@@ -284,6 +284,10 @@ Findings so far (2026-11-24, from reading the code; not measured):
       vs speed, resolution).
 - [ ] **Real-device test (you):** AnyDesk on the same tablet/phone and network, same
       scenes, filmed the same way.
+- [x] Instructions for the AnyDesk runs and a bitrate helper (`docs/LATENCY-TEST.md`,
+      `scripts/net_rate.sh`). AnyDesk 6.4.3 is installed on the host and the tablet app
+      is installed (2026-11-24). On Wayland it shares an existing screen, so compare it
+      with TabScreen's mirror scenes (guess: to be confirmed on the first run).
 
 `m2c/compare` (base: both measurement branches; docs only)
 - [ ] Compare the transport: TabScreen is WebSocket over TCP (head-of-line blocking,
