@@ -416,9 +416,10 @@ Branches that do not depend on each other can run in parallel (see
 `.claude/rules/git-workflow.md`). Each branch is based on `main` unless noted.
 
 `m2/device-backlog` (docs only; no code)
-- [ ] Write one checklist that covers every open **Real-device test (you)** box: M2
+- [x] Write one checklist that covers every open **Real-device test (you)** box: M2
       (replug, rotate, 150–200 % scale), `m2b/frame-ack`, `m2b/skip-slow-client`,
-      `m2b/rate-control`, with exact steps and the lines to look for in the log.
+      `m2b/rate-control`, with exact steps and the lines to look for in the log
+      ([DEVICE-TESTS.md](DEVICE-TESTS.md)).
 - [ ] **Real-device test (you):** run the checklist in one session and report the
       results; Claude records them next to each box. Tick M2 and the M2b branches
       only after that.
