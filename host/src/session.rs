@@ -157,8 +157,9 @@ impl Manager {
             Source::Mirror(_) => "mirroring",
         };
         eprintln!(
-            "{name}: {what} {connector} {width}x{height} (scale {}, {codec:?}, touch {}, PipeWire node {})",
+            "{name}: {what} {connector} {width}x{height} (scale {}, {:?}, touch {}, PipeWire node {})",
             scale.get(),
+            encoder.codec(),
             if self.settings.touch { "on" } else { "off" },
             stream.node_id
         );

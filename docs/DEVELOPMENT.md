@@ -101,6 +101,17 @@ Other tools:
   frames per second straight from PipeWire.
 - `cargo clippy --release --all-targets` — kept warning-free.
 
+### Trying the encoder fallback
+
+On a machine where NVENC works, set `TABSCREEN_TEST_NVENC_FAIL` (only affects
+`--encoder nvenc` or `auto` resolving to NVENC):
+- `start`: the NVENC pipeline fails to build; the log says it failed to start and
+  x264 is used from the first frame.
+- `runtime`: NVENC reports an error 5 s after it starts; the log says
+  `encoder: Nvenc failed, switching to X264` and the stream continues.
+
+Without NVENC, `--encoder nvenc` takes the `start` path (covered by a unit test).
+
 ## Measuring performance
 
 The host logs every 5 s while frames flow:

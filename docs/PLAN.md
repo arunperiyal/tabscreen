@@ -424,14 +424,13 @@ Branches that do not depend on each other can run in parallel (see
       only after that.
 
 `m2/encoder-fallback`
-- [ ] If the chosen encoder fails to start or errors at runtime (NVENC present but
+- [x] If the chosen encoder fails to start or errors at runtime (NVENC present but
       failing), log it and restart the pipeline with x264; keep clients connected and
       send a keyframe after the switch.
-- [ ] Tests: the fallback decision (which error triggers it, no loop when x264 also
+- [x] Tests: the fallback decision (which error triggers it, no loop when x264 also
       fails). Document `--encoder` behaviour in the README and `--help`.
-- [ ] **Real-device test (you):** force an NVENC failure (for example an invalid
-      option through an environment variable added for testing, or running with the
-      nvcodec plugin hidden) and check the stream continues on x264 with one log line.
+- [ ] **Real-device test (you):** force an NVENC failure (`TABSCREEN_TEST_NVENC_FAIL=start` or
+      `runtime`, see DEVELOPMENT.md) and check the stream continues on x264 with one log line.
 
 `m2/host-stats`
 - [ ] Log once per 10 s per stream: fps in/out, Mbit/s, encode ms, clients, per-client
