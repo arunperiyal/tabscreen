@@ -259,7 +259,7 @@ Goal: find out where the time goes and what AnyDesk does differently, then decid
 what to adopt. Analysis first; no fixes in this task.
 
 `m2c/measure-tabscreen` (base: `main`)
-- [ ] Define the test: same machine, same Wi‑Fi, same content (a slide animation, a
+- [x] Define the test (`docs/LATENCY-TEST.md`, clock page `scripts/latency_clock.html`): same machine, same Wi‑Fi, same content (a slide animation, a
       dragged window, scrolling text). Record screen-to-screen latency by filming a
       running millisecond clock on the host and the viewer with a phone at 240 fps.
 - [ ] **Real-device test (you):** run the defined test on the tablet and the phone and
@@ -270,6 +270,13 @@ what to adopt. Analysis first; no fixes in this task.
 - [ ] Check whether frames are skipped or delayed on the host (PipeWire damage
       pacing, 60 fps cap, the 1 fps keep-alive when static) and how the client
       presents frames (render on arrival, not on a vsync queue).
+
+Findings so far (2026-11-24, from reading the code; not measured):
+- The client draws each frame in the decoder's `output` callback (`drawImage` straight
+  to the canvas), so it presents on arrival and adds no vsync queue of its own; the
+  decoder is configured with `optimizeForLatency` (`web/client.js`).
+- Guess, to check with the filmed test: the 150 ms VBV buffer in rate control
+  (`VBV_MS`) limits bursts but could add delay to large frames on a slow link.
 
 `m2c/measure-anydesk` (base: `main`)
 - [ ] Measure AnyDesk in the same scenes: bitrate (router or `nethogs`), frame rate,

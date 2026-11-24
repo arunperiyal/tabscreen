@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TabScreen latency clock</title>
+<!-- Open this file in two windows: one on the laptop panel (the reference) and one on
+     the monitor being streamed. Film both screens and the viewer in one 240 fps clip;
+     the difference between the two readings is the latency. Date.now() is used so both
+     windows agree even though they are separate pages. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #0f0; display: grid; place-items: center; }
+  #t { font: 700 22vmin/1 monospace; }
+</style>
+<div id="t">0.000</div>
+<script>
+  const el = document.getElementById('t');
+  // Seconds with millisecond digits, wrapping every 100 s.
+  const tick = () => { el.textContent = ((Date.now() % 100000) / 1000).toFixed(3).padStart(6, '0'); requestAnimationFrame(tick); };
+  tick();
+</script>
