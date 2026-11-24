@@ -68,3 +68,34 @@ give the stage times, and the viewer's status line gives fps, Mbit/s, `rtt` and 
 Test matrix for TabScreen: tablet over USB, tablet over Wi‑Fi, phone over Wi‑Fi
 (mirror), and with `--public-host` if you can; each in scenes 1–4. For AnyDesk: the same
 viewer devices and scenes.
+
+## AnyDesk runs
+
+AnyDesk is measured the same way (same clock page, scenes, filming, devices) so the
+rows are comparable. Differences to write down in the Notes column:
+
+- **What it shares.** On a Wayland session AnyDesk shares an existing screen through the
+  desktop's share dialog; it does not create an extra monitor. So it mirrors the
+  laptop panel (or the projector), and touch maps onto that screen. Compare it with
+  TabScreen's **mirror** scenes (phone/tablet watching a mirror), and note that a
+  TabScreen virtual monitor is a different (extended) setup.
+- **Versions and settings.** Host AnyDesk version (`anydesk --version`), the tablet app
+  version, and the display quality setting used (record the choices exactly as the app
+  names them: quality/speed preset, codec if shown, resolution scaling). Run once at
+  its default and once at its fastest setting.
+- **Resolution.** Note the size AnyDesk streams at; it may scale down. If it does, also
+  run TabScreen with `--size` set to the same.
+- **Bitrate.** Measure the host's network rate while the scene runs, for both tools:
+
+  ```sh
+  ip -br link          # find the Wi‑Fi interface, on this machine wlp0s20f3
+  scripts/net_rate.sh wlp0s20f3 10
+  ```
+
+  `tx` is what the host sends; subtract the idle value (run it once with nothing
+  streaming) if the network is busy. Do it during the scene, not before it.
+- **Other connections.** AnyDesk may relay through its servers or connect directly; the
+  session information in the app tells which. Direct (same LAN) is the fair comparison;
+  note it if it is relayed.
+
+Fill one row per tool, scene and setting in the same table as above.
