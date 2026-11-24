@@ -113,6 +113,12 @@ tablet's monitor. Move the mouse onto it (past the edge you arranged in Settings
    your screen activity means the computer is struggling; with x264, try
    `--encoder nvenc` if you have an NVIDIA GPU.
 
+**`encoder: Nvenc failed, switching to X264` in the log**
+NVENC could not start or stopped with an error (driver update, GPU busy, no
+session slot). The host replaced it with x264 and viewers stay connected, at a
+higher CPU cost. Check the `encoder: error from …` line just above for the
+cause, and the `nvidia-smi` output. Restart the host to try NVENC again.
+
 **One viewer (e.g. a phone) lags further and further behind, especially during
 animations**
 The host now drops frames for a viewer that can't keep up (it logs

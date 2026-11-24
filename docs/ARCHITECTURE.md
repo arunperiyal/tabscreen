@@ -125,7 +125,7 @@ Over Wi‑Fi the WebSocket URL carries the stream's token: `…/ws?t=<token>`.
 - **Capture**: PipeWire shared-memory buffers (BGRx), copied into a tightly
   packed `gst::Buffer` (~3 ms at 2944×1840). Mutter sends frames only on damage,
   so a static screen produces none.
-- **Encoding** (`--encoder auto` picks NVENC if the `nvh264enc` element exists):
+- **Encoding** (`--encoder auto` picks NVENC if the `nvh264enc` element exists; if NVENC fails to start or reports an error later, the pipeline is replaced by x264 on the fly and the last frame is re-sent as a keyframe, so viewers stay connected):
   - NVENC: `nvh264enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0`,
     fed BGRx directly (colour conversion on the GPU).
   - x264: `videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast

@@ -149,7 +149,7 @@ monitor disappears.
 | `--no-touch` | off | View only: ignore touch from every client |
 | `--size WxH` | tablet's screen | Fixed monitor size instead of following the tablet |
 | `--list-monitors` | | List monitors and their connector names, then exit |
-| `--encoder auto\|nvenc\|x264` | `auto` | `auto` picks NVENC when available |
+| `--encoder auto\|nvenc\|x264` | `auto` | `auto` picks NVENC when available; if NVENC fails to start or errors while running, the host switches to x264 and keeps the stream up |
 | `--bitrate KBPS` | `12000` | Target video bitrate |
 | `--port PORT` | `8765` | HTTP port (USB) |
 | `--wifi-port PORT` | `8766` | HTTPS port (Wi‑Fi) |
