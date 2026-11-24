@@ -41,16 +41,23 @@ impl InFlight {
     }
 
     /// The client received the frame with `pts_us` (and so everything before it,
-    /// since TCP delivers in order).
-    pub fn acked(&mut self, pts_us: u64) {
+    /// since TCP delivers in order). Returns how long ago that frame was sent: the
+    /// network round trip plus the client's wait for the socket, or `None` if the
+    /// frame is not in the record (already acked, or sent before a `clear`).
+    pub fn acked(&mut self, pts_us: u64) -> Option<Duration> {
         self.acking = true;
+        let mut delay = None;
         while let Some(front) = self.sent.front() {
             if front.pts_us > pts_us {
                 break;
             }
+            if front.pts_us == pts_us {
+                delay = Some(front.at.elapsed());
+            }
             self.bytes -= front.bytes;
             self.sent.pop_front();
         }
+        delay
     }
 
     /// Forget everything, e.g. when a new session starts and the client resets.
@@ -104,6 +111,16 @@ pub fn decide(slow: bool, need_keyframe: bool, keyframe: bool) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ack_reports_how_long_the_frame_took() {
+        let mut f = InFlight::default();
+        f.sent(10, 100, false, Instant::now() - Duration::from_millis(40));
+        let delay = f.acked(10).expect("frame was in the record");
+        assert!(delay >= Duration::from_millis(40), "{delay:?}");
+        assert_eq!(f.acked(10), None, "already acked");
+        assert_eq!(f.acked(99), None, "never sent");
+    }
 
     #[test]
     fn decide_covers_each_state() {

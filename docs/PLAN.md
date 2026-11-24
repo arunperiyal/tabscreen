@@ -434,11 +434,13 @@ Branches that do not depend on each other can run in parallel (see
       nvcodec plugin hidden) and check the stream continues on x264 with one log line.
 
 `m2/host-stats`
-- [ ] Log once per 10 s per stream: fps in/out, Mbit/s, encode ms, clients, per-client
-      rtt (from the ping messages) and frames skipped.
-- [ ] Document the log lines in `docs/TROUBLESHOOTING.md`.
+- [x] Log once per 10 s per stream: clients and, per viewer, fps, Mbit/s, frame-ack delay
+      (measured on the host from the acks; ping messages are echoed and carry only the
+      client's clock) and frames skipped. Encode fps/ms stay in the existing 5 s
+      `encoder:` line, which does not yet name its stream (follow-up).
+- [x] Document the log lines in `docs/TROUBLESHOOTING.md`.
 - [ ] **Real-device test (you):** run with a tablet and a phone for a minute; the lines
-      appear and the rtt matches the client status line.
+      appear and the ack delay is close to the `rtt` on the client status line.
 
 `m2c/measure-tabscreen`, `m2c/measure-anydesk`, `m2c/compare` (already listed in M2c)
 - Do these before any transport work. Order: `measure-tabscreen` and `measure-anydesk`

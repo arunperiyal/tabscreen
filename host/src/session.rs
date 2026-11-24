@@ -14,6 +14,7 @@ use crate::display;
 use crate::encoder::{Codec, EncodedFrame, Encoder};
 use crate::input::{self, InputCmd};
 use crate::mutter::{CursorMode, ScreenStream, Source};
+use crate::stats::{self, ViewerStats};
 
 /// How long the session outlives its last client, so a reload or a quick
 /// replug doesn't shuffle windows around.
@@ -62,6 +63,8 @@ pub struct Manager {
     /// Connected clients, and a counter bumped on every connect so a pending
     /// idle teardown can tell that someone came back.
     clients: Mutex<(usize, u64)>,
+    /// Counters of the connected viewers, for the periodic stats line.
+    viewers: Mutex<Vec<Arc<ViewerStats>>>,
 }
 
 impl Manager {
@@ -74,6 +77,7 @@ impl Manager {
             current: watch::channel(None).0,
             lifecycle: Mutex::new(()),
             clients: Mutex::new((0, 0)),
+            viewers: Mutex::default(),
         })
     }
 
@@ -201,6 +205,38 @@ impl Manager {
         clients.0 += 1;
         clients.1 += 1;
         clients.0
+    }
+
+    /// Register a viewer's counters for the stats line; pair with [`Manager::remove_viewer`].
+    pub fn add_viewer(&self, peer: std::net::SocketAddr) -> Arc<ViewerStats> {
+        let stats = Arc::new(ViewerStats::new(peer));
+        self.viewers.lock().unwrap().push(stats.clone());
+        stats
+    }
+
+    pub fn remove_viewer(&self, stats: &Arc<ViewerStats>) {
+        self.viewers.lock().unwrap().retain(|v| !Arc::ptr_eq(v, stats));
+    }
+
+    /// Log a line with each viewer's fps, bitrate, ack delay and skipped frames every
+    /// `every`, while anyone is connected. Run inside the tokio runtime.
+    pub fn spawn_stats_log(self: &Arc<Self>, every: Duration) {
+        let manager = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(every);
+            ticker.tick().await;
+            let mut last = std::time::Instant::now();
+            loop {
+                ticker.tick().await;
+                let Some(manager) = manager.upgrade() else { return };
+                let secs = last.elapsed().as_secs_f64();
+                last = std::time::Instant::now();
+                let viewers: Vec<_> = manager.viewers.lock().unwrap().iter().map(|v| (v.peer, v.take())).collect();
+                if !viewers.is_empty() {
+                    eprintln!("{}", stats::format_line(manager.name(), secs, &viewers));
+                }
+            }
+        });
     }
 
     /// Stop the session if no client reconnects within [`IDLE_TEARDOWN`].

@@ -33,6 +33,7 @@ encoder).
 | `mutter.rs` | Mutter D-Bus session: `RemoteDesktop.CreateSession` + `ScreenCast.RecordVirtual` or `RecordMonitor`, touch injection |
 | `display.rs` | Mutter `DisplayConfig`: finds our connector (`Meta-N`) and tracks its scale |
 | `capture.rs` | PipeWire consumer: frames with pixels → encoder; `SPA_META_Cursor` → cursor channels |
+| `stats.rs` | Per-viewer counters and the periodic per-stream log line |
 | `encoder.rs` | GStreamer pipeline `appsrc ! … ! h264parse ! appsink`; keyframes on demand; stats |
 | `input.rs` | Touch injection thread: normalized coordinates → logical pixels → Mutter |
 | `server.rs` | Serves the web client per stream (`/`, `/s/<name>/`), speaks the WebSocket protocol, checks each stream's Wi‑Fi token |
@@ -206,4 +207,5 @@ Measured at 2944×1840 with a 60 fps test window (Intel i9-11950H, NVIDIA T600):
 
 The host adds roughly 12–17 ms; transport and the tablet's decoder add the
 rest. The page's status line shows fps, bitrate, round-trip time and decode
-time; the host logs capture and encoder statistics every 5 s.
+time; the host logs capture and encoder statistics every 5 s, and every 10 s a
+per-viewer line per stream (fps, Mbit/s, frame-ack delay, skipped frames; `stats.rs`).
